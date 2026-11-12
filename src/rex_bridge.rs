@@ -199,12 +199,18 @@ pub fn resolve_live_followed_cwd(
         }
     }
 
+    let mut first_any: Option<(String, PathBuf)> = None;
     for bid in candidate_blocks {
         if let Some(cwd) = query_block_cwd(session_id, &bid) {
-            return Some((bid, cwd));
+            if crate::git::repo_root(&cwd).is_ok() {
+                return Some((bid, cwd));
+            }
+            if first_any.is_none() {
+                first_any = Some((bid, cwd));
+            }
         }
     }
-    None
+    first_any
 }
 
 pub fn match_agent_identity(raw_name: &str) -> Option<(&'static str, &'static str)> {

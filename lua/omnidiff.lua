@@ -199,6 +199,7 @@ rex.action{
         for _, blk in ipairs(layer.blocks or {}) do
           if blk.label == DOCK_LABEL then
             local _, close_err = rex.call("block.close", {
+              session_id = view.session_id,
               block_id = blk.block_id,
             })
             if close_err ~= nil then

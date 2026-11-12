@@ -169,8 +169,20 @@ struct AppState {
 }
 
 impl AppState {
-    fn new(opts: UiOptions) -> Self {
+    fn new(mut opts: UiOptions) -> Self {
         let rex_ctx = detect_session_context();
+        if repo_root(&opts.cwd).is_err()
+            && let Some(sid) = rex_ctx.session_id.as_deref()
+            && let Some((src_bid, git_cwd)) = resolve_live_followed_cwd(
+                sid,
+                rex_ctx.self_block_id.as_deref(),
+                opts.source_block.as_deref(),
+            )
+            && repo_root(&git_cwd).is_ok()
+        {
+            opts.cwd = git_cwd;
+            opts.source_block = Some(src_bid);
+        }
         let palette = load_active_rex_palette();
         let scope = opts
             .initial_scope
