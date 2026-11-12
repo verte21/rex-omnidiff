@@ -38,14 +38,8 @@ impl RowAnnotations {
         self.has_insert || self.has_delete || self.has_update || self.has_move
     }
 
-    fn is_pure_move(&self) -> bool {
-        self.has_move && !self.has_delete && !self.has_insert && !self.has_update
-    }
-
     fn marker(&self, is_before: bool) -> String {
-        if self.is_pure_move() {
-            "⇄".to_string()
-        } else if is_before {
+        if is_before {
             "-".to_string()
         } else {
             "+".to_string()
@@ -53,9 +47,7 @@ impl RowAnnotations {
     }
 
     fn row_bg(&self, is_before: bool) -> Option<String> {
-        if self.is_pure_move() {
-            Some("m".to_string())
-        } else if is_before {
+        if is_before {
             Some("d".to_string())
         } else {
             Some("i".to_string())
@@ -1191,6 +1183,41 @@ pub fn build_text_diff_response_with_index(
                         &mut max_split_chars,
                     );
                 }
+                if has_prev_change {
+                    unified_rows.push(UnifiedRow {
+                        key: format!("spacer:pre:{fold_id}"),
+                        kind: "spacer".to_string(),
+                        chunk_idx: None,
+                        fold_id: None,
+                        count: None,
+                        text: None,
+                        breadcrumb: None,
+                        move_hint: None,
+                        target_chunk: None,
+                        staged: None,
+                        reviewed: None,
+                        old_no: None,
+                        new_no: None,
+                        marker: None,
+                        row_bg: None,
+                        segs: Vec::new(),
+                    });
+                    split_rows.push(SplitRow {
+                        key: format!("spacer:pre:{fold_id}"),
+                        kind: "spacer".to_string(),
+                        chunk_idx: None,
+                        fold_id: None,
+                        count: None,
+                        text: None,
+                        breadcrumb: None,
+                        move_hint: None,
+                        target_chunk: None,
+                        staged: None,
+                        reviewed: None,
+                        left: None,
+                        right: None,
+                    });
+                }
                 let hidden = len - lead - trail;
                 let msg = format!(
                     "… {hidden} unchanged line{} (click to expand) …",
@@ -1218,7 +1245,7 @@ pub fn build_text_diff_response_with_index(
                     key: format!("elide:{fold_id}"),
                     kind: "elide".to_string(),
                     chunk_idx: None,
-                    fold_id: Some(fold_id),
+                    fold_id: Some(fold_id.clone()),
                     count: Some(hidden),
                     text: Some(msg),
                     breadcrumb: None,
@@ -1229,6 +1256,41 @@ pub fn build_text_diff_response_with_index(
                     left: None,
                     right: None,
                 });
+                if has_next_change {
+                    unified_rows.push(UnifiedRow {
+                        key: format!("spacer:post:{fold_id}"),
+                        kind: "spacer".to_string(),
+                        chunk_idx: None,
+                        fold_id: None,
+                        count: None,
+                        text: None,
+                        breadcrumb: None,
+                        move_hint: None,
+                        target_chunk: None,
+                        staged: None,
+                        reviewed: None,
+                        old_no: None,
+                        new_no: None,
+                        marker: None,
+                        row_bg: None,
+                        segs: Vec::new(),
+                    });
+                    split_rows.push(SplitRow {
+                        key: format!("spacer:post:{fold_id}"),
+                        kind: "spacer".to_string(),
+                        chunk_idx: None,
+                        fold_id: None,
+                        count: None,
+                        text: None,
+                        breadcrumb: None,
+                        move_hint: None,
+                        target_chunk: None,
+                        staged: None,
+                        reviewed: None,
+                        left: None,
+                        right: None,
+                    });
+                }
                 for off in (len - trail)..len {
                     push_ctx(
                         off,
@@ -1258,62 +1320,6 @@ pub fn build_text_diff_response_with_index(
         chunks[ci].unified_row = u_idx;
         chunks[ci].split_row = s_idx;
 
-        let c_ref = &chunks[ci];
-        let header_label = format!(
-            "Hunk {}/{} · @@ -{},{} +{},{} @@",
-            ci + 1,
-            chunks.len(),
-            blk.b_start + 1,
-            blk.b_end - blk.b_start,
-            blk.a_start + 1,
-            blk.a_end - blk.a_start
-        );
-        let move_hint = c_ref.move_info.as_ref().map(|m| {
-            if m.start_line == m.end_line {
-                format!("⇄ Moved {} line {}", m.direction, m.start_line)
-            } else {
-                format!(
-                    "⇄ Moved {} lines {}–{}",
-                    m.direction, m.start_line, m.end_line
-                )
-            }
-        });
-        let target_chunk = c_ref.move_info.as_ref().and_then(|m| m.target_chunk);
-
-        unified_rows.push(UnifiedRow {
-            key: format!("chunk:{ci}"),
-            kind: "chunk".to_string(),
-            chunk_idx: Some(ci),
-            fold_id: None,
-            count: None,
-            text: Some(header_label.clone()),
-            breadcrumb: c_ref.breadcrumb.clone(),
-            move_hint: move_hint.clone(),
-            target_chunk,
-            staged: Some(c_ref.staged),
-            reviewed: Some(c_ref.reviewed),
-            old_no: None,
-            new_no: None,
-            marker: None,
-            row_bg: None,
-            segs: Vec::new(),
-        });
-        split_rows.push(SplitRow {
-            key: format!("chunk:{ci}"),
-            kind: "chunk".to_string(),
-            chunk_idx: Some(ci),
-            fold_id: None,
-            count: None,
-            text: Some(header_label),
-            breadcrumb: c_ref.breadcrumb.clone(),
-            move_hint,
-            target_chunk,
-            staged: Some(c_ref.staged),
-            reviewed: Some(c_ref.reviewed),
-            left: None,
-            right: None,
-        });
-
         let mut left_cells: Vec<SplitCell> = Vec::with_capacity(blk.b_end - blk.b_start);
         let mut right_cells: Vec<SplitCell> = Vec::with_capacity(blk.a_end - blk.a_start);
 
@@ -1322,6 +1328,7 @@ pub fn build_text_diff_response_with_index(
             let side_spans: Vec<(usize, usize, &'static str)> = ann
                 .spans
                 .iter()
+                .filter(|&&(_, _, op)| op != "m")
                 .map(|&(s, e, op)| (s, e, if op == "u" { "d" } else { op }))
                 .collect();
             let (segs, dlen) = slice_line_segments(before_lines[br], &side_spans);
@@ -1360,6 +1367,7 @@ pub fn build_text_diff_response_with_index(
             let side_spans: Vec<(usize, usize, &'static str)> = ann
                 .spans
                 .iter()
+                .filter(|&&(_, _, op)| op != "m")
                 .map(|&(s, e, op)| (s, e, if op == "u" { "i" } else { op }))
                 .collect();
             let (segs, dlen) = slice_line_segments(after_lines[ar], &side_spans);

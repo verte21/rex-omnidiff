@@ -18,7 +18,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::{Frame, Terminal};
 
 use crate::actions::{
@@ -39,7 +39,7 @@ use crate::theme::{
     LineSyntaxState, ThemePalette, detect_rex_active_theme_id, load_active_rex_palette,
     tokenize_syntax_segment,
 };
-use crate::types::{ChunkInfo, DiffResponse, FileEntry, SplitCell, TextSegment};
+use crate::types::{DiffResponse, FileEntry, SplitCell, TextSegment};
 
 #[derive(Debug, Clone)]
 pub struct UiOptions {
@@ -65,6 +65,7 @@ enum ComposerMode {
     Commit,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum HitAction {
     SelectScope(String),
@@ -1364,6 +1365,7 @@ fn pad_spans_to_width(spans: &mut Vec<Span<'static>>, cur_w: u16, target_w: u16,
     }
 }
 
+
 fn draw_app(f: &mut Frame<'_>, app: &mut AppState) {
     app.hitboxes.clear();
     app.pending_kitty_rect = None;
@@ -1381,16 +1383,16 @@ fn draw_app(f: &mut Frame<'_>, app: &mut AppState) {
     let vert = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2), // Header bar + horizontal structural border
+            Constraint::Length(2), // Clean top bar + subtle divider
             Constraint::Min(6),
             Constraint::Length(bottom_h),
         ])
         .split(full);
 
     let body = vert[1];
-    let show_sidebar = app.sidebar_open && body.width >= 72;
+    let show_sidebar = app.sidebar_open && body.width >= 76;
     let side_w = if show_sidebar {
-        if body.width >= 130 { 36 } else { 30 }
+        if body.width >= 136 { 34 } else { 28 }
     } else {
         0
     };
@@ -1428,24 +1430,19 @@ fn draw_header_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect, side_w: u1
     let mut x = r0.x;
     let y = r0.y;
 
-    let mode_tag = if app.opts.mode == "dock" {
-        " ◆ OmniDiff · DOCK "
-    } else {
-        " ◆ OmniDiff "
-    };
+    push_sep(&mut spans, &mut x, "  ", Style::default().bg(pal.chrome));
     push_button(
         &mut spans,
         &mut app.hitboxes,
         y,
         &mut x,
-        mode_tag.to_string(),
+        "◆ OmniDiff".to_string(),
         Style::default()
-            .fg(Color::Rgb(12, 16, 26))
-            .bg(pal.ask_text)
+            .fg(pal.ask_text)
+            .bg(pal.chrome)
             .add_modifier(Modifier::BOLD),
         HitAction::ToggleSidebar,
     );
-    push_sep(&mut spans, &mut x, " ", Style::default().bg(pal.chrome));
 
     if let Some(st) = &app.status {
         let repo_name = PathBuf::from(&st.root)
@@ -1453,19 +1450,14 @@ fn draw_header_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect, side_w: u1
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "repo".to_string());
         let branch = st.branch.as_deref().unwrap_or("HEAD");
-        let pill = format!(" ⎇ {repo_name} · {branch} ");
-        let w = pill.chars().count() as u16;
+        let repo_txt = format!("   {repo_name}:{branch}    ");
+        let w = repo_txt.chars().count() as u16;
         spans.push(Span::styled(
-            pill,
-            Style::default()
-                .fg(pal.fg)
-                .bg(pal.raised)
-                .add_modifier(Modifier::BOLD),
+            repo_txt,
+            Style::default().fg(pal.muted).bg(pal.chrome),
         ));
         x += w;
-        push_sep(&mut spans, &mut x, "  ", Style::default().bg(pal.chrome));
 
-        // Scope switcher pills right in the header for instant visibility
         for (key, num_key, lbl, cnt) in [
             ("all", "1", "All", st.all.len()),
             ("unstaged", "2", "Unstaged", st.unstaged.len()),
@@ -1473,14 +1465,14 @@ fn draw_header_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect, side_w: u1
             ("commits", "4", "Commits", st.commits.len()),
         ] {
             let active = app.scope == key;
-            let text = format!(" {num_key}:{lbl} ({cnt}) ");
+            let text = format!(" {num_key} {lbl} {cnt} ");
             let style = if active {
                 Style::default()
                     .fg(Color::Rgb(12, 16, 26))
                     .bg(pal.accent)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(pal.muted).bg(pal.surface)
+                Style::default().fg(pal.muted).bg(pal.chrome)
             };
             push_button(
                 &mut spans,
@@ -1491,7 +1483,7 @@ fn draw_header_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect, side_w: u1
                 style,
                 HitAction::SelectScope(key.to_string()),
             );
-            push_sep(&mut spans, &mut x, " ", Style::default().bg(pal.chrome));
+            push_sep(&mut spans, &mut x, "  ", Style::default().bg(pal.chrome));
         }
 
         if st.undo_count > 0 {
@@ -1501,48 +1493,25 @@ fn draw_header_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect, side_w: u1
                 y,
                 &mut x,
                 format!(" ↶ Undo ({}) ", st.undo_count),
-                Style::default()
-                    .fg(pal.warn_text)
-                    .bg(pal.raised)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(pal.warn_text).bg(pal.chrome),
                 HitAction::UndoTop,
             );
-            push_sep(&mut spans, &mut x, " ", Style::default().bg(pal.chrome));
         }
     }
 
-    // Right-align the view/preset/window controls when space permits
-    let preset_lbl = match app.preset.as_str() {
-        "minimal" => " AST:Minimal ",
-        "full" => " AST:Full ",
-        _ => " AST:Auto ",
-    };
+    // Minimal right-hand controls: only Split/Unified toggle + Close
     let split_active = app.is_split_mode(app.viewport_cols as u16);
     let view_lbl = if split_active {
-        " ▥ Split (Tab) "
+        " Split (Tab) "
     } else {
-        " ▤ Unified (Tab) "
+        " Unified (Tab) "
     };
-    let wrap_lbl = if app.wrap_lines {
-        " ↵ Wrap:ON "
-    } else {
-        " ↵ Wrap:OFF "
-    };
-    let right_total_w = (preset_lbl.chars().count()
-        + 1
-        + view_lbl.chars().count()
-        + 1
-        + wrap_lbl.chars().count()
-        + 1
-        + " ⧉ TUI ".chars().count()
-        + 1
-        + " ↻ ".chars().count()
-        + 1
-        + " × Close ".chars().count()) as u16;
+    let close_lbl = " × ";
+    let right_w = (view_lbl.chars().count() + 2 + close_lbl.chars().count() + 2) as u16;
 
     let used_w = x.saturating_sub(r0.x);
-    if used_w + right_total_w + 2 < r0.width {
-        let pad = r0.width - used_w - right_total_w - 1;
+    if used_w + right_w < r0.width {
+        let pad = r0.width - used_w - right_w;
         spans.push(Span::styled(
             " ".repeat(pad as usize),
             Style::default().bg(pal.chrome),
@@ -1555,81 +1524,23 @@ fn draw_header_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect, side_w: u1
         &mut app.hitboxes,
         y,
         &mut x,
-        preset_lbl.to_string(),
-        Style::default().fg(pal.fg).bg(pal.raised),
-        HitAction::CyclePreset,
-    );
-    push_sep(&mut spans, &mut x, " ", Style::default().bg(pal.chrome));
-
-    push_button(
-        &mut spans,
-        &mut app.hitboxes,
-        y,
-        &mut x,
         view_lbl.to_string(),
-        Style::default()
-            .fg(pal.ask_text)
-            .bg(pal.raised)
-            .add_modifier(Modifier::BOLD),
+        Style::default().fg(pal.muted).bg(pal.surface),
         HitAction::ToggleViewMode,
     );
-    push_sep(&mut spans, &mut x, " ", Style::default().bg(pal.chrome));
-
+    push_sep(&mut spans, &mut x, "  ", Style::default().bg(pal.chrome));
     push_button(
         &mut spans,
         &mut app.hitboxes,
         y,
         &mut x,
-        wrap_lbl.to_string(),
-        Style::default()
-            .fg(if app.wrap_lines {
-                pal.add_text
-            } else {
-                pal.muted
-            })
-            .bg(pal.raised),
-        HitAction::ToggleWrap,
-    );
-    push_sep(&mut spans, &mut x, " ", Style::default().bg(pal.chrome));
-
-    push_button(
-        &mut spans,
-        &mut app.hitboxes,
-        y,
-        &mut x,
-        " ⧉ TUI ".to_string(),
-        Style::default().fg(pal.fg).bg(pal.raised),
-        HitAction::LaunchTui,
-    );
-    push_sep(&mut spans, &mut x, " ", Style::default().bg(pal.chrome));
-
-    push_button(
-        &mut spans,
-        &mut app.hitboxes,
-        y,
-        &mut x,
-        " ↻ ".to_string(),
-        Style::default().fg(pal.fg).bg(pal.raised),
-        HitAction::Refresh,
-    );
-    push_sep(&mut spans, &mut x, " ", Style::default().bg(pal.chrome));
-
-    push_button(
-        &mut spans,
-        &mut app.hitboxes,
-        y,
-        &mut x,
-        " × Close ".to_string(),
-        Style::default()
-            .fg(pal.del_text)
-            .bg(pal.raised)
-            .add_modifier(Modifier::BOLD),
+        close_lbl.to_string(),
+        Style::default().fg(pal.muted).bg(pal.chrome),
         HitAction::CloseApp,
     );
 
     f.render_widget(Paragraph::new(Line::from(spans)), r0);
 
-    // Row 1: Crisp horizontal border rule with T-junction at sidebar boundary
     if area.height >= 2 {
         let r1 = Rect {
             x: area.x,
@@ -1647,7 +1558,7 @@ fn draw_header_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect, side_w: u1
         f.render_widget(
             Paragraph::new(Span::styled(
                 rule_str,
-                Style::default().fg(pal.border_bright).bg(pal.chrome),
+                Style::default().fg(pal.border).bg(pal.bg),
             )),
             r1,
         );
@@ -1658,7 +1569,7 @@ fn draw_sidebar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
     let pal = &app.palette;
     let block = Block::default()
         .borders(Borders::RIGHT)
-        .border_style(Style::default().fg(pal.border_bright))
+        .border_style(Style::default().fg(pal.border))
         .style(Style::default().bg(pal.surface));
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -1667,63 +1578,7 @@ fn draw_sidebar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
         return;
     }
 
-    // Row 0: Bulk Actions Bar (fits cleanly inside 29+ cols without clipping)
-    let sub_rect = Rect {
-        x: inner.x,
-        y: inner.y,
-        width: inner.width,
-        height: 1,
-    };
-    let mut sub_spans = Vec::new();
-    let mut sx = sub_rect.x;
-    push_sep(&mut sub_spans, &mut sx, " ", Style::default().bg(pal.surface));
-    if app.scope != "commits" {
-        push_button(
-            &mut sub_spans,
-            &mut app.hitboxes,
-            sub_rect.y,
-            &mut sx,
-            " +Stage All ".to_string(),
-            Style::default()
-                .fg(pal.add_text)
-                .bg(pal.raised)
-                .add_modifier(Modifier::BOLD),
-            HitAction::StageAll,
-        );
-        push_sep(&mut sub_spans, &mut sx, " ", Style::default().bg(pal.surface));
-        push_button(
-            &mut sub_spans,
-            &mut app.hitboxes,
-            sub_rect.y,
-            &mut sx,
-            " -Unstage ".to_string(),
-            Style::default().fg(pal.warn_text).bg(pal.raised),
-            HitAction::UnstageAll,
-        );
-        push_sep(&mut sub_spans, &mut sx, " ", Style::default().bg(pal.surface));
-        push_button(
-            &mut sub_spans,
-            &mut app.hitboxes,
-            sub_rect.y,
-            &mut sx,
-            " ✓Commit ".to_string(),
-            Style::default()
-                .fg(pal.ask_text)
-                .bg(pal.raised)
-                .add_modifier(Modifier::BOLD),
-            HitAction::OpenCommit,
-        );
-    } else {
-        sub_spans.push(Span::styled(
-            " COMMIT HISTORY",
-            Style::default()
-                .fg(pal.ask_text)
-                .add_modifier(Modifier::BOLD),
-        ));
-    }
-    f.render_widget(Paragraph::new(Line::from(sub_spans)), sub_rect);
-
-    // Row 1: Section Header Rule
+    // Leave row 0 blank for top breathing space; row 1 is a quiet section label
     let hdr_rect = Rect {
         x: inner.x,
         y: inner.y + 1,
@@ -1731,29 +1586,26 @@ fn draw_sidebar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
         height: 1,
     };
     let file_count = app.current_files().len();
-    let sec_title = format!("── FILES ({file_count}) ");
-    let sec_pad = (inner.width as usize).saturating_sub(sec_title.chars().count());
+    let sec_title = if app.scope == "commits" {
+        "  COMMITS & FILES".to_string()
+    } else {
+        format!("  FILES ({file_count})")
+    };
     f.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                sec_title,
-                Style::default()
-                    .fg(pal.muted)
-                    .bg(pal.surface)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "─".repeat(sec_pad),
-                Style::default().fg(pal.border).bg(pal.surface),
-            ),
-        ])),
+        Paragraph::new(Span::styled(
+            sec_title,
+            Style::default()
+                .fg(pal.dim)
+                .bg(pal.surface)
+                .add_modifier(Modifier::BOLD),
+        )),
         hdr_rect,
     );
 
-    let mut list_top = inner.y + 2;
-    let mut list_h = inner.height.saturating_sub(2);
+    // Leave row 2 blank below the section label
+    let mut list_top = inner.y + 3;
+    let mut list_h = inner.height.saturating_sub(3);
 
-    // In commits scope, render top commits list in upper half
     if app.scope == "commits"
         && let Some(st) = &app.status
         && !st.commits.is_empty()
@@ -1773,8 +1625,8 @@ fn draw_sidebar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
             } else {
                 pal.surface
             };
-            let bar = if is_sel { "▌" } else { " " };
-            let max_subj = (inner.width as usize).saturating_sub(11);
+            let bar = if is_sel { "▌ " } else { "  " };
+            let max_subj = (inner.width as usize).saturating_sub(12);
             let subj: String = c.subject.chars().take(max_subj).collect();
             let line = Line::from(vec![
                 Span::styled(bar, Style::default().fg(pal.ask_text).bg(bg)),
@@ -1796,15 +1648,15 @@ fn draw_sidebar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
                 action: HitAction::SelectCommit(c.hash.clone()),
             });
         }
-        list_top += ch;
-        list_h = list_h.saturating_sub(ch);
+        list_top += ch + 1;
+        list_h = list_h.saturating_sub(ch + 1);
     }
 
     let files = app.current_files().to_vec();
     if files.is_empty() {
         let empty_rect = Rect {
             x: inner.x,
-            y: list_top + 1,
+            y: list_top,
             width: inner.width,
             height: 1,
         };
@@ -1857,20 +1709,19 @@ fn draw_sidebar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
         };
 
         let fname = file.path.rsplit('/').next().unwrap_or(&file.path);
-        let sel_bar = if selected { "▌" } else { " " };
+        let sel_bar = if selected { "▌ " } else { "  " };
         let rev_mark = if file.reviewed { "✓" } else { " " };
-        let action_cols = if app.scope == "commits" { 0usize } else { 6usize };
 
         let add_s = format!("+{}", file.add);
         let del_s = format!("-{}", file.del);
         let stat_len = if file.binary {
-            4
+            5
         } else {
-            add_s.len() + 1 + del_s.len() + 1
+            add_s.len() + 1 + del_s.len() + 2
         };
 
         let avail_name = (inner.width as usize)
-            .saturating_sub(5 + stat_len + action_cols)
+            .saturating_sub(6 + stat_len)
             .max(6);
         let disp_name: String = fname.chars().take(avail_name).collect();
 
@@ -1883,7 +1734,7 @@ fn draw_sidebar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!("{rev_mark}{}", file.status),
+                format!("{}{rev_mark}", file.status),
                 Style::default()
                     .fg(if file.reviewed {
                         pal.add_text
@@ -1908,7 +1759,7 @@ fn draw_sidebar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
 
         if file.binary {
             spans.push(Span::styled(
-                "BIN ",
+                "BIN  ",
                 Style::default().fg(pal.warn_text).bg(bg),
             ));
         } else {
@@ -1917,61 +1768,15 @@ fn draw_sidebar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
                 Style::default().fg(pal.add_text).bg(bg),
             ));
             spans.push(Span::styled(
-                format!("{del_s} "),
+                format!("{del_s}  "),
                 Style::default().fg(pal.del_text).bg(bg),
             ));
         }
 
-        let main_w = inner.width.saturating_sub(action_cols as u16);
         app.hitboxes.push(HitBox {
-            rect: Rect {
-                x: inner.x,
-                y: ry,
-                width: main_w,
-                height: 1,
-            },
+            rect: row_rect,
             action: HitAction::SelectFile(idx),
         });
-
-        if app.scope != "commits" {
-            let mut bx = inner.x + main_w;
-            if file.unstaged_part {
-                push_button(
-                    &mut spans,
-                    &mut app.hitboxes,
-                    ry,
-                    &mut bx,
-                    "[+]".to_string(),
-                    Style::default()
-                        .fg(pal.add_text)
-                        .bg(bg)
-                        .add_modifier(Modifier::BOLD),
-                    HitAction::StageFile(idx),
-                );
-            } else if file.staged_part {
-                push_button(
-                    &mut spans,
-                    &mut app.hitboxes,
-                    ry,
-                    &mut bx,
-                    "[-]".to_string(),
-                    Style::default()
-                        .fg(pal.warn_text)
-                        .bg(bg)
-                        .add_modifier(Modifier::BOLD),
-                    HitAction::UnstageFile(idx),
-                );
-            }
-            push_button(
-                &mut spans,
-                &mut app.hitboxes,
-                ry,
-                &mut bx,
-                "[×]".to_string(),
-                Style::default().fg(pal.del_text).bg(bg),
-                HitAction::DiscardFile(idx),
-            );
-        }
 
         f.render_widget(
             Paragraph::new(Line::from(spans)).style(Style::default().bg(bg)),
@@ -1981,7 +1786,7 @@ fn draw_sidebar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
 }
 
 fn draw_diff_pane(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
-    let pal = &app.palette;
+    let pal = app.palette.clone();
     if area.height < 5 || area.width < 20 {
         return;
     }
@@ -1989,7 +1794,7 @@ fn draw_diff_pane(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
     let Some(diff) = app.diff.clone() else {
         f.render_widget(
             Paragraph::new(Span::styled(
-                "  Select a changed file on the left to inspect its structural AST diff.",
+                "   Select a changed file on the left to inspect its diff.",
                 Style::default().fg(pal.muted),
             )),
             Rect {
@@ -2002,15 +1807,31 @@ fn draw_diff_pane(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
         return;
     };
 
+    // 2-row calm file bar + 1 blank breathing row above the code
     let layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(4)])
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Length(1),
+            Constraint::Min(4),
+        ])
         .split(area);
 
     let split_active = app.is_split_mode(area.width);
     draw_sticky_hunk_toolbar(f, app, &diff, layout[0], split_active);
 
-    let vp = layout[1];
+    // Draw center split divider on the 1-row top breathing gap if in split mode
+    if split_active && !diff.binary && diff.picture_media.is_none() {
+        let gap = layout[1];
+        let left_w = (gap.width as usize).saturating_sub(1) / 2;
+        let line = Line::from(vec![
+            Span::styled(" ".repeat(left_w), Style::default().bg(pal.bg)),
+            Span::styled("│", Style::default().fg(pal.border).bg(pal.bg)),
+        ]);
+        f.render_widget(Paragraph::new(line), gap);
+    }
+
+    let vp = layout[2];
     app.viewport_rows = vp.height as usize;
     app.viewport_cols = vp.width as usize;
 
@@ -2033,130 +1854,54 @@ fn draw_sticky_hunk_toolbar(
     split_active: bool,
 ) {
     let pal = &app.palette;
-    f.render_widget(
-        Block::default().style(Style::default().bg(pal.surface)),
-        area,
-    );
-
-    // Row 0: File path + language + semantic summary + token counts + Reviewed & Ask AI buttons
     let r0 = Rect {
         x: area.x,
         y: area.y,
         width: area.width,
         height: 1,
     };
+    f.render_widget(
+        Block::default().style(Style::default().bg(pal.bg)),
+        r0,
+    );
+
     let mut s0: Vec<Span<'static>> = Vec::new();
     let mut x0 = r0.x;
 
     let path_disp = if let Some(old) = &diff.old_path {
-        format!(" 📄 {old} → {} ", diff.path)
+        format!("   {old} → {}  ", diff.path)
     } else {
-        format!(" 📄 {} ", diff.path)
+        format!("   {}  ", diff.path)
     };
     let pw = path_disp.chars().count() as u16;
     s0.push(Span::styled(
         path_disp,
         Style::default()
             .fg(pal.fg)
-            .bg(pal.surface)
+            .bg(pal.bg)
             .add_modifier(Modifier::BOLD),
     ));
     x0 += pw;
-    push_sep(&mut s0, &mut x0, " ", Style::default().bg(pal.surface));
-
-    if let Some(lang) = &diff.language {
-        let lp = format!(" {lang} ");
-        let lw = lp.chars().count() as u16;
-        s0.push(Span::styled(
-            lp,
-            Style::default()
-                .fg(pal.ask_text)
-                .bg(pal.raised)
-                .add_modifier(Modifier::BOLD),
-        ));
-        x0 += lw;
-        push_sep(&mut s0, &mut x0, " ", Style::default().bg(pal.surface));
-    }
-
-    if let Some(sum) = &diff.summary {
-        let sp = format!(" {sum} ");
-        let sw = sp.chars().count() as u16;
-        s0.push(Span::styled(
-            sp,
-            Style::default().fg(pal.move_text).bg(pal.raised),
-        ));
-        x0 += sw;
-        push_sep(&mut s0, &mut x0, " ", Style::default().bg(pal.surface));
-    }
 
     let c = &diff.counts;
-    for (txt, col) in [
-        (format!(" +{} ", c.insertions), pal.add_text),
-        (format!(" -{} ", c.deletions), pal.del_text),
-        (format!(" ~{} ", c.updates), pal.upd_text),
-        (format!(" ⇄{} ", c.moves), pal.move_text),
-    ] {
-        let w = txt.chars().count() as u16;
-        s0.push(Span::styled(
-            txt,
-            Style::default()
-                .fg(col)
-                .bg(pal.surface)
-                .add_modifier(Modifier::BOLD),
-        ));
-        x0 += w;
-    }
-
-    push_sep(&mut s0, &mut x0, "  ", Style::default().bg(pal.surface));
-
-    let rev_lbl = if diff.file_reviewed {
-        " ✓ Reviewed (v) "
-    } else {
-        " ○ Mark Reviewed (v) "
-    };
-    let rev_style = if diff.file_reviewed {
+    let add_txt = format!("+{} ", c.insertions);
+    let del_txt = format!("-{}   ", c.deletions);
+    s0.push(Span::styled(
+        add_txt.clone(),
         Style::default()
             .fg(pal.add_text)
-            .bg(pal.reviewed_bg)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(pal.fg).bg(pal.raised)
-    };
-    push_button(
-        &mut s0,
-        &mut app.hitboxes,
-        r0.y,
-        &mut x0,
-        rev_lbl.to_string(),
-        rev_style,
-        HitAction::ToggleFileReview,
-    );
-    push_sep(&mut s0, &mut x0, " ", Style::default().bg(pal.surface));
-
-    push_button(
-        &mut s0,
-        &mut app.hitboxes,
-        r0.y,
-        &mut x0,
-        " 💬 Ask AI (a) ".to_string(),
-        Style::default()
-            .fg(Color::Rgb(12, 16, 26))
-            .bg(pal.ask_text)
+            .bg(pal.bg)
             .add_modifier(Modifier::BOLD),
-        HitAction::OpenAskAi,
-    );
-    f.render_widget(Paragraph::new(Line::from(s0)), r0);
-
-    // Row 1: Hunk stepper + breadcrumb + Move jump + Stage/Unstage/Revert
-    let r1 = Rect {
-        x: area.x,
-        y: area.y + 1,
-        width: area.width,
-        height: 1,
-    };
-    let mut s1: Vec<Span<'static>> = Vec::new();
-    let mut x1 = r1.x;
-    push_sep(&mut s1, &mut x1, " ", Style::default().bg(pal.surface));
+    ));
+    x0 += add_txt.chars().count() as u16;
+    s0.push(Span::styled(
+        del_txt.clone(),
+        Style::default()
+            .fg(pal.del_text)
+            .bg(pal.bg)
+            .add_modifier(Modifier::BOLD),
+    ));
+    x0 += del_txt.chars().count() as u16;
 
     let total_chunks = diff.chunks.len();
     let cur_hunk = if total_chunks == 0 {
@@ -2165,112 +1910,128 @@ fn draw_sticky_hunk_toolbar(
         app.active_chunk.min(total_chunks - 1) + 1
     };
 
+    if let Some(chunk) = diff.chunks.get(app.active_chunk)
+        && let Some(bc) = &chunk.breadcrumb
+    {
+        let bc_trunc: String = bc.chars().take(42).collect();
+        let bt = format!("@ {bc_trunc}   ");
+        let bw = bt.chars().count() as u16;
+        s0.push(Span::styled(bt, Style::default().fg(pal.dim).bg(pal.bg)));
+        x0 += bw;
+    }
+
+    // Right-align calm hunk counter + 3 understated actions
+    let hunk_lbl = format!(" Hunk {cur_hunk}/{total_chunks} ");
+    let stage_lbl = if app.scope == "staged" {
+        " u unstage "
+    } else {
+        " s stage "
+    };
+    let rev_lbl = if diff.file_reviewed {
+        " ✓ reviewed "
+    } else {
+        " v review "
+    };
+    let ai_lbl = " a ask AI ";
+    let right_w = (hunk_lbl.chars().count()
+        + 4
+        + stage_lbl.chars().count()
+        + 2
+        + rev_lbl.chars().count()
+        + 2
+        + ai_lbl.chars().count()
+        + 2) as u16;
+
+    let used_w = x0.saturating_sub(r0.x);
+    if used_w + right_w < r0.width {
+        let pad = r0.width - used_w - right_w;
+        s0.push(Span::styled(
+            " ".repeat(pad as usize),
+            Style::default().bg(pal.bg),
+        ));
+        x0 += pad;
+    }
+
     push_button(
-        &mut s1,
+        &mut s0,
         &mut app.hitboxes,
-        r1.y,
-        &mut x1,
-        " ◄ Prev ".to_string(),
-        Style::default().fg(pal.fg).bg(pal.raised),
+        r0.y,
+        &mut x0,
+        "◄".to_string(),
+        Style::default().fg(pal.muted).bg(pal.bg),
         HitAction::PrevHunk,
     );
-    let step_txt = format!(" Hunk {cur_hunk}/{total_chunks} ");
-    let sw = step_txt.chars().count() as u16;
-    s1.push(Span::styled(
-        step_txt,
+    let hw = hunk_lbl.chars().count() as u16;
+    s0.push(Span::styled(
+        hunk_lbl,
         Style::default()
             .fg(pal.ask_text)
-            .bg(pal.chunk_bg)
+            .bg(pal.bg)
             .add_modifier(Modifier::BOLD),
     ));
-    x1 += sw;
+    x0 += hw;
     push_button(
-        &mut s1,
+        &mut s0,
         &mut app.hitboxes,
-        r1.y,
-        &mut x1,
-        " Next ► ".to_string(),
-        Style::default().fg(pal.fg).bg(pal.raised),
+        r0.y,
+        &mut x0,
+        "►".to_string(),
+        Style::default().fg(pal.muted).bg(pal.bg),
         HitAction::NextHunk,
     );
-    push_sep(&mut s1, &mut x1, "  ", Style::default().bg(pal.surface));
-
-    if let Some(chunk) = diff.chunks.get(app.active_chunk) {
-        if let Some(bc) = &chunk.breadcrumb {
-            let bc_trunc: String = bc.chars().take(38).collect();
-            let bt = format!(" @ {bc_trunc} ");
-            let bw = bt.chars().count() as u16;
-            s1.push(Span::styled(
-                bt,
-                Style::default().fg(pal.fg).bg(pal.raised),
-            ));
-            x1 += bw;
-            push_sep(&mut s1, &mut x1, " ", Style::default().bg(pal.surface));
-        }
-        if let Some(mi) = &chunk.move_info
-            && let Some(tc) = mi.target_chunk
-        {
-            push_button(
-                &mut s1,
-                &mut app.hitboxes,
-                r1.y,
-                &mut x1,
-                format!(" ⇄ Moved {} L{} (m) ", mi.direction, mi.start_line),
-                Style::default()
-                    .fg(pal.move_text)
-                    .bg(pal.raised)
-                    .add_modifier(Modifier::BOLD),
-                HitAction::JumpMove(tc),
-            );
-            push_sep(&mut s1, &mut x1, " ", Style::default().bg(pal.surface));
-        }
-    }
+    push_sep(&mut s0, &mut x0, "  ", Style::default().bg(pal.bg));
 
     if app.scope != "commits" && total_chunks > 0 {
-        if app.scope != "staged" {
-            push_button(
-                &mut s1,
-                &mut app.hitboxes,
-                r1.y,
-                &mut x1,
-                " + Stage Hunk (s) ".to_string(),
-                Style::default()
-                    .fg(pal.add_text)
-                    .bg(pal.raised)
-                    .add_modifier(Modifier::BOLD),
-                HitAction::StageActiveHunk,
-            );
-            push_sep(&mut s1, &mut x1, " ", Style::default().bg(pal.surface));
-            push_button(
-                &mut s1,
-                &mut app.hitboxes,
-                r1.y,
-                &mut x1,
-                " ↶ Revert Hunk (x) ".to_string(),
-                Style::default().fg(pal.del_text).bg(pal.raised),
-                HitAction::RevertActiveHunk,
-            );
-            push_sep(&mut s1, &mut x1, " ", Style::default().bg(pal.surface));
-        }
-        if app.scope != "unstaged" {
-            push_button(
-                &mut s1,
-                &mut app.hitboxes,
-                r1.y,
-                &mut x1,
-                " - Unstage Hunk (u) ".to_string(),
-                Style::default().fg(pal.warn_text).bg(pal.raised),
-                HitAction::UnstageActiveHunk,
-            );
-        }
+        let act = if app.scope == "staged" {
+            HitAction::UnstageActiveHunk
+        } else {
+            HitAction::StageActiveHunk
+        };
+        push_button(
+            &mut s0,
+            &mut app.hitboxes,
+            r0.y,
+            &mut x0,
+            stage_lbl.to_string(),
+            Style::default().fg(pal.add_text).bg(pal.surface),
+            act,
+        );
+        push_sep(&mut s0, &mut x0, "  ", Style::default().bg(pal.bg));
     }
 
-    f.render_widget(Paragraph::new(Line::from(s1)), r1);
+    push_button(
+        &mut s0,
+        &mut app.hitboxes,
+        r0.y,
+        &mut x0,
+        rev_lbl.to_string(),
+        Style::default()
+            .fg(if diff.file_reviewed {
+                pal.add_text
+            } else {
+                pal.muted
+            })
+            .bg(pal.surface),
+        HitAction::ToggleFileReview,
+    );
+    push_sep(&mut s0, &mut x0, "  ", Style::default().bg(pal.bg));
 
-    // Row 2: Column Header Divider Bar (`BEFORE` vs `AFTER` in Split Mode, or Unified rule)
-    let r2 = Rect {
+    push_button(
+        &mut s0,
+        &mut app.hitboxes,
+        r0.y,
+        &mut x0,
+        ai_lbl.to_string(),
+        Style::default().fg(pal.ask_text).bg(pal.surface),
+        HitAction::OpenAskAi,
+    );
+
+    f.render_widget(Paragraph::new(Line::from(s0)), r0);
+
+    // Row 1: Subtle divider rule under the file bar
+    let r1 = Rect {
         x: area.x,
-        y: area.y + 2,
+        y: area.y + 1,
         width: area.width,
         height: 1,
     };
@@ -2278,61 +2039,32 @@ fn draw_sticky_hunk_toolbar(
     if split_active && !diff.binary && diff.picture_media.is_none() {
         let left_w = total_w.saturating_sub(1) / 2;
         let right_w = total_w.saturating_sub(1).saturating_sub(left_w);
-        let left_lbl = match app.scope.as_str() {
-            "unstaged" => "── BEFORE (INDEX) ",
-            "commits" => "── BEFORE (PARENT) ",
-            _ => "── BEFORE (HEAD) ",
-        };
-        let right_lbl = match app.scope.as_str() {
-            "staged" => "── AFTER (STAGED INDEX) ",
-            "commits" => "── AFTER (COMMIT) ",
-            _ => "── AFTER (WORKING TREE) ",
-        };
+        let left_lbl = "─── before ";
+        let right_lbl = "─── after ";
         let l_pad = left_w.saturating_sub(left_lbl.chars().count());
         let r_pad = right_w.saturating_sub(right_lbl.chars().count());
         let line = Line::from(vec![
-            Span::styled(
-                left_lbl,
-                Style::default()
-                    .fg(pal.del_text)
-                    .bg(pal.chrome)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Span::styled(left_lbl, Style::default().fg(pal.dim).bg(pal.bg)),
             Span::styled(
                 "─".repeat(l_pad),
-                Style::default().fg(pal.border_bright).bg(pal.chrome),
+                Style::default().fg(pal.border).bg(pal.bg),
             ),
-            Span::styled("┬", Style::default().fg(pal.border_bright).bg(pal.chrome)),
-            Span::styled(
-                right_lbl,
-                Style::default()
-                    .fg(pal.add_text)
-                    .bg(pal.chrome)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Span::styled("┬", Style::default().fg(pal.border).bg(pal.bg)),
+            Span::styled(right_lbl, Style::default().fg(pal.dim).bg(pal.bg)),
             Span::styled(
                 "─".repeat(r_pad),
-                Style::default().fg(pal.border_bright).bg(pal.chrome),
+                Style::default().fg(pal.border).bg(pal.bg),
             ),
         ]);
-        f.render_widget(Paragraph::new(line), r2);
+        f.render_widget(Paragraph::new(line), r1);
     } else {
-        let lbl = "── AST DIFF ";
-        let pad = total_w.saturating_sub(lbl.chars().count());
-        let line = Line::from(vec![
-            Span::styled(
-                lbl,
-                Style::default()
-                    .fg(pal.ask_text)
-                    .bg(pal.chrome)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "─".repeat(pad),
-                Style::default().fg(pal.border_bright).bg(pal.chrome),
-            ),
-        ]);
-        f.render_widget(Paragraph::new(line), r2);
+        f.render_widget(
+            Paragraph::new(Span::styled(
+                "─".repeat(total_w),
+                Style::default().fg(pal.border).bg(pal.bg),
+            )),
+            r1,
+        );
     }
 }
 
@@ -2423,7 +2155,10 @@ fn draw_picture_diff_card(
         let pw = pct_s.chars().count() as u16;
         bar_spans.push(Span::styled(
             pct_s,
-            Style::default().fg(pal.warn_text).bg(pal.surface),
+            Style::default()
+                .fg(pal.ask_text)
+                .bg(pal.surface)
+                .add_modifier(Modifier::BOLD),
         ));
         bx += pw;
         push_button(
@@ -2435,67 +2170,64 @@ fn draw_picture_diff_card(
             Style::default().fg(pal.fg).bg(pal.raised),
             HitAction::AdjustKittySlider(10),
         );
+        push_sep(&mut bar_spans, &mut bx, " ", Style::default().bg(pal.bg));
     }
 
-    f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_rect);
-
-    let stat_rect = Rect {
-        x: area.x,
-        y: area.y + 1,
-        width: area.width,
-        height: 1,
-    };
     let b_dim = stats
         .before_dims
         .map(|(w, h)| format!("{w}×{h}"))
-        .unwrap_or_else(|| "none".into());
+        .unwrap_or_else(|| "—".to_string());
     let a_dim = stats
         .after_dims
         .map(|(w, h)| format!("{w}×{h}"))
-        .unwrap_or_else(|| "none".into());
+        .unwrap_or_else(|| "—".to_string());
     let pct = if stats.total_pixels > 0 {
-        (stats.changed_pixels as f64) * 100.0 / (stats.total_pixels as f64)
+        (stats.changed_pixels as f64 / stats.total_pixels as f64) * 100.0
     } else {
         0.0
     };
-    let summary_line = format!(
-        " Kitty Graphics Protocol · Before: {b_dim} → After: {a_dim} · Δ {} px ({pct:.2}%) · {} changed region(s)",
-        stats.changed_pixels,
-        stats.regions.len()
+    let meta = format!(
+        "  Before: {b_dim}   After: {a_dim}   Changed: {} px ({pct:.2}%)  [Kitty Graphics Protocol]",
+        stats.changed_pixels
     );
-    f.render_widget(
-        Paragraph::new(Span::styled(summary_line, Style::default().fg(pal.muted))),
-        stat_rect,
-    );
+    bar_spans.push(Span::styled(meta, Style::default().fg(pal.muted)));
 
-    if area.height > 3 {
-        let img_rect = Rect {
+    f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_rect);
+
+    if area.height > 2 {
+        let canvas = Rect {
             x: area.x + 1,
             y: area.y + 2,
             width: area.width.saturating_sub(2),
-            height: area.height.saturating_sub(3),
+            height: area.height.saturating_sub(2),
         };
-        f.render_widget(Clear, img_rect);
-        app.pending_kitty_rect = Some(img_rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(pal.border))
+            .title(Span::styled(
+                format!(" Kitty Image Diff · {} ", app.kitty_mode.label()),
+                Style::default().fg(pal.ask_text),
+            ));
+        let inner = block.inner(canvas);
+        f.render_widget(block, canvas);
+        app.pending_kitty_rect = Some(inner);
     }
 }
 
-fn draw_binary_card(f: &mut Frame<'_>, app: &mut AppState, diff: &DiffResponse, area: Rect) {
+fn draw_binary_card(f: &mut Frame<'_>, app: &AppState, diff: &DiffResponse, area: Rect) {
     let pal = &app.palette;
     let mut lines = vec![
         Line::from(Span::styled(
-            format!(" Binary / Container Diff: {}", diff.path),
-            Style::default().fg(pal.fg).add_modifier(Modifier::BOLD),
+            "   Binary / Non-Text File Changed",
+            Style::default()
+                .fg(pal.warn_text)
+                .add_modifier(Modifier::BOLD),
         )),
-        Line::from(Span::styled(
-            format!(" Engine: {} · Signature: {}", diff.engine, diff.file_sig),
-            Style::default().fg(pal.muted),
-        )),
+        Line::from(""),
     ];
-    if let Some(content) = &diff.content
-        && let Ok(pretty) = serde_json::to_string_pretty(content)
-    {
-        for l in pretty.lines().take(area.height.saturating_sub(3) as usize) {
+    if let Some(content) = &diff.content {
+        let pretty = serde_json::to_string_pretty(content).unwrap_or_default();
+        for l in pretty.lines().take(24) {
             lines.push(Line::from(Span::styled(
                 format!("   {l}"),
                 Style::default().fg(pal.ask_text),
@@ -2513,27 +2245,14 @@ fn render_elide_row(
     row_rect: Rect,
 ) {
     let pal = &app.palette;
-    let label = format!(" ↕ {count} unchanged lines (click to expand) ");
-    let total_w = row_rect.width as usize;
-    let lbl_w = label.chars().count();
-    let left_rule = total_w.saturating_sub(lbl_w) / 2;
-    let right_rule = total_w.saturating_sub(lbl_w).saturating_sub(left_rule);
-
     let line = Line::from(vec![
         Span::styled(
-            "─".repeat(left_rule),
-            Style::default().fg(pal.fold_rule).bg(pal.fold_bg),
+            "       ⋯       │  ",
+            Style::default().fg(pal.border).bg(pal.bg),
         ),
         Span::styled(
-            label,
-            Style::default()
-                .fg(pal.fold_fg)
-                .bg(pal.fold_bg)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "─".repeat(right_rule),
-            Style::default().fg(pal.fold_rule).bg(pal.fold_bg),
+            format!("↕ {count} unchanged lines"),
+            Style::default().fg(pal.fold_fg).bg(pal.bg),
         ),
     ]);
     f.render_widget(Paragraph::new(line), row_rect);
@@ -2545,179 +2264,21 @@ fn render_elide_row(
     }
 }
 
-fn render_chunk_banner_line(
-    app: &mut AppState,
-    chunk: &ChunkInfo,
-    total_chunks: usize,
-    is_active: bool,
-    row_rect: Rect,
-) -> Line<'static> {
-    let pal = &app.palette;
-    let bg = if is_active {
-        pal.chunk_active_bg
-    } else {
-        pal.chunk_bg
-    };
-    let rail_fg = if is_active {
-        pal.chunk_active_rail
-    } else {
-        pal.chunk_rail
-    };
-    let badge_fg = if is_active {
-        pal.ask_text
-    } else {
-        pal.chunk_range_text
-    };
-
-    let mut spans: Vec<Span<'static>> = Vec::new();
-    let mut x = row_rect.x;
-    let y = row_rect.y;
-
-    let prefix = if is_active { "▌ ▸ " } else { "▌   " };
-    let lead = format!(
-        "{prefix}Hunk {}/{}  @@ -{},{} +{},{} @@{} ",
-        chunk.index + 1,
-        total_chunks,
-        chunk.b_start + 1,
-        chunk.b_end.saturating_sub(chunk.b_start),
-        chunk.a_start + 1,
-        chunk.a_end.saturating_sub(chunk.a_start),
-        if chunk.staged { "  [✓ STAGED]" } else { "" }
-    );
-    let lw = lead.chars().count() as u16;
-    spans.push(Span::styled(
-        lead,
-        Style::default()
-            .fg(badge_fg)
-            .bg(bg)
-            .add_modifier(Modifier::BOLD),
-    ));
-    x += lw;
-
-    if let Some(bc) = &chunk.breadcrumb {
-        let max_bc = (row_rect.width as usize).saturating_sub(68).clamp(16, 48);
-        let bc_s: String = bc.chars().take(max_bc).collect();
-        let txt = format!(" @ {bc_s}  ");
-        let w = txt.chars().count() as u16;
-        spans.push(Span::styled(
-            txt,
-            Style::default()
-                .fg(pal.fg)
-                .bg(bg)
-                .add_modifier(Modifier::BOLD),
-        ));
-        x += w;
-    }
-
-    if let Some(mi) = &chunk.move_info
-        && let Some(tc) = mi.target_chunk
-    {
-        push_button(
-            &mut spans,
-            &mut app.hitboxes,
-            y,
-            &mut x,
-            format!(" [⇄ Moved {} L{}] ", mi.direction, mi.start_line),
-            Style::default()
-                .fg(pal.move_text)
-                .bg(bg)
-                .add_modifier(Modifier::BOLD),
-            HitAction::JumpMove(tc),
-        );
-    }
-
-    if app.scope != "commits" && chunk.patchable {
-        if app.scope != "staged" && !chunk.staged {
-            push_button(
-                &mut spans,
-                &mut app.hitboxes,
-                y,
-                &mut x,
-                " [+ Stage] ".to_string(),
-                Style::default()
-                    .fg(pal.add_text)
-                    .bg(bg)
-                    .add_modifier(Modifier::BOLD),
-                HitAction::StageHunkIdx(chunk.index),
-            );
-        }
-        if app.scope != "unstaged" && (chunk.staged || app.scope == "staged") {
-            push_button(
-                &mut spans,
-                &mut app.hitboxes,
-                y,
-                &mut x,
-                " [- Unstage] ".to_string(),
-                Style::default()
-                    .fg(pal.warn_text)
-                    .bg(bg)
-                    .add_modifier(Modifier::BOLD),
-                HitAction::UnstageHunkIdx(chunk.index),
-            );
-        }
-        if app.scope != "staged" {
-            push_button(
-                &mut spans,
-                &mut app.hitboxes,
-                y,
-                &mut x,
-                " [↶ Revert] ".to_string(),
-                Style::default().fg(pal.del_text).bg(bg),
-                HitAction::RevertHunkIdx(chunk.index),
-            );
-        }
-    }
-
-    push_button(
-        &mut spans,
-        &mut app.hitboxes,
-        y,
-        &mut x,
-        if chunk.reviewed {
-            " [✓ Reviewed] ".to_string()
-        } else {
-            " [○ Review] ".to_string()
-        },
-        Style::default()
-            .fg(if chunk.reviewed {
-                pal.add_text
-            } else {
-                pal.muted
-            })
-            .bg(bg),
-        HitAction::ToggleChunkReview(chunk.index),
-    );
-
-    let used_w = x.saturating_sub(row_rect.x);
-    if used_w < row_rect.width {
-        let rem = (row_rect.width - used_w) as usize;
-        spans.push(Span::styled(
-            " ".repeat(rem),
-            Style::default().fg(rail_fg).bg(bg),
-        ));
-    }
-
-    Line::from(spans)
-}
-
 fn has_intraline_token_highlights(segs: &[TextSegment], row_bg_tag: Option<&str>) -> bool {
     let non_ws: Vec<&TextSegment> = segs.iter().filter(|s| !s.t.trim().is_empty()).collect();
     if non_ws.is_empty() {
         return false;
     }
-    if non_ws
-        .iter()
-        .any(|s| matches!(s.op.as_deref(), Some("u") | Some("m")))
-    {
+    if non_ws.iter().any(|s| s.op.as_deref() == Some("u")) {
         return true;
     }
     let has_plain = non_ws.iter().any(|s| s.op.is_none());
-    let has_op = non_ws.iter().any(|s| s.op.is_some());
+    let has_op = non_ws
+        .iter()
+        .any(|s| matches!(s.op.as_deref(), Some("i") | Some("d") | Some("u")));
     if has_plain && has_op {
         return true;
     }
-    // If every non-whitespace segment on a pure "+" or "-" line has the same "i"/"d" op as the row,
-    // use the smooth full-width row background rather than painting a second box around the text.
     if matches!(row_bg_tag, Some("i") | Some("d")) {
         return false;
     }
@@ -2749,7 +2310,6 @@ fn style_code_segments(
                     };
                     (b, true, true)
                 }
-                Some("m") => (pal.seg_m, true, false),
                 _ => (row_bg, false, false),
             }
         } else {
@@ -2831,26 +2391,7 @@ fn draw_unified_code_diff(
             height: 1,
         };
 
-        if r.kind == "chunk"
-            && let Some(ci) = r.chunk_idx
-            && let Some(chunk) = diff.chunks.get(ci)
-        {
-            let line = render_chunk_banner_line(
-                app,
-                chunk,
-                diff.chunks.len(),
-                app.active_chunk == ci,
-                row_rect,
-            );
-            let bg = if app.active_chunk == ci {
-                pal.chunk_active_bg
-            } else {
-                pal.chunk_bg
-            };
-            f.render_widget(
-                Paragraph::new(line).style(Style::default().bg(bg)),
-                row_rect,
-            );
+        if r.kind == "spacer" || r.kind == "chunk" {
             continue;
         }
 
@@ -2891,15 +2432,15 @@ fn draw_unified_code_diff(
         };
 
         let left_bar = if is_selected {
-            Span::styled("▌", Style::default().fg(pal.ask_text).bg(base_bg))
+            Span::styled("▌ ", Style::default().fg(pal.ask_text).bg(base_bg))
         } else if is_queued {
-            Span::styled("▌", Style::default().fg(pal.move_text).bg(base_bg))
+            Span::styled("▌ ", Style::default().fg(pal.move_text).bg(base_bg))
         } else if in_active_chunk {
-            Span::styled("▌", Style::default().fg(pal.chunk_active_rail).bg(base_bg))
+            Span::styled("▌ ", Style::default().fg(pal.chunk_active_rail).bg(base_bg))
         } else if in_chunk {
-            Span::styled("▏", Style::default().fg(pal.chunk_rail).bg(base_bg))
+            Span::styled("▏ ", Style::default().fg(pal.chunk_rail).bg(base_bg))
         } else {
-            Span::styled(" ", Style::default().bg(base_bg))
+            Span::styled("  ", Style::default().bg(base_bg))
         };
 
         let old_s = r
@@ -2914,7 +2455,6 @@ fn draw_unified_code_diff(
         let marker_fg = match marker {
             "+" => pal.add_text,
             "-" => pal.del_text,
-            "⇄" => pal.move_text,
             _ => pal.line_num,
         };
         let num_fg = if in_chunk {
@@ -2926,7 +2466,7 @@ fn draw_unified_code_diff(
         let mut spans = vec![
             left_bar,
             Span::styled(
-                format!("{old_s} {new_s} "),
+                format!("{old_s} {new_s}  "),
                 Style::default().fg(num_fg).bg(base_bg),
             ),
             Span::styled(
@@ -2936,10 +2476,10 @@ fn draw_unified_code_diff(
                     .bg(base_bg)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" │ ", Style::default().fg(pal.border).bg(base_bg)),
+            Span::styled(" │  ", Style::default().fg(pal.border).bg(base_bg)),
         ];
 
-        let gutter_w = 15usize;
+        let gutter_w = 18usize;
         let code_w = (area.width as usize).saturating_sub(gutter_w);
         spans.extend(style_code_segments(
             &r.segs,
@@ -2977,29 +2517,24 @@ fn render_split_half(
 ) -> Vec<Span<'static>> {
     let rail = |bg: Color| -> Span<'static> {
         if is_selected {
-            Span::styled("▌", Style::default().fg(pal.ask_text).bg(bg))
+            Span::styled("▌ ", Style::default().fg(pal.ask_text).bg(bg))
         } else if is_queued {
-            Span::styled("▌", Style::default().fg(pal.move_text).bg(bg))
+            Span::styled("▌ ", Style::default().fg(pal.move_text).bg(bg))
         } else if in_active_chunk {
-            Span::styled("▌", Style::default().fg(pal.chunk_active_rail).bg(bg))
+            Span::styled("▌ ", Style::default().fg(pal.chunk_active_rail).bg(bg))
         } else if in_chunk {
-            Span::styled("▏", Style::default().fg(pal.chunk_rail).bg(bg))
+            Span::styled("▏ ", Style::default().fg(pal.chunk_rail).bg(bg))
         } else {
-            Span::styled(" ", Style::default().bg(bg))
+            Span::styled("  ", Style::default().bg(bg))
         }
     };
 
     let Some(c) = cell else {
-        // Recessed empty alignment cell with subtle hatch so users immediately see missing lines
-        let mut pat = String::with_capacity(width);
-        for i in 0..width.saturating_sub(1) {
-            pat.push(if i % 4 == 1 { '╱' } else { ' ' });
-        }
         return vec![
             rail(pal.empty_split),
             Span::styled(
-                pat,
-                Style::default().fg(pal.empty_split_fg).bg(pal.empty_split),
+                " ".repeat(width.saturating_sub(2)),
+                Style::default().bg(pal.empty_split),
             ),
         ];
     };
@@ -3021,7 +2556,6 @@ fn render_split_half(
     let marker_fg = match c.marker.as_str() {
         "+" => pal.add_text,
         "-" => pal.del_text,
-        "⇄" => pal.move_text,
         _ => pal.line_num,
     };
     let num_fg = if in_chunk || c.row_bg.is_some() {
@@ -3033,7 +2567,7 @@ fn render_split_half(
     let mut spans = vec![
         rail(base_bg),
         Span::styled(
-            format!("{:>4} ", c.line_no),
+            format!("{:>4}  ", c.line_no),
             Style::default().fg(num_fg).bg(base_bg),
         ),
         Span::styled(
@@ -3043,10 +2577,10 @@ fn render_split_half(
                 .bg(base_bg)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" │ ", Style::default().fg(pal.border).bg(base_bg)),
+        Span::styled(" │  ", Style::default().fg(pal.border).bg(base_bg)),
     ];
 
-    let gutter_w = 10usize;
+    let gutter_w = 13usize;
     let code_w = width.saturating_sub(gutter_w);
     spans.extend(style_code_segments(
         &c.segs,
@@ -3096,26 +2630,12 @@ fn draw_split_code_diff(
             height: 1,
         };
 
-        if r.kind == "chunk"
-            && let Some(ci) = r.chunk_idx
-            && let Some(chunk) = diff.chunks.get(ci)
-        {
-            let line = render_chunk_banner_line(
-                app,
-                chunk,
-                diff.chunks.len(),
-                app.active_chunk == ci,
-                row_rect,
-            );
-            let bg = if app.active_chunk == ci {
-                pal.chunk_active_bg
-            } else {
-                pal.chunk_bg
-            };
-            f.render_widget(
-                Paragraph::new(line).style(Style::default().bg(bg)),
-                row_rect,
-            );
+        if r.kind == "spacer" || r.kind == "chunk" {
+            let line = Line::from(vec![
+                Span::styled(" ".repeat(left_w), Style::default().bg(pal.bg)),
+                Span::styled("│", Style::default().fg(pal.border).bg(pal.bg)),
+            ]);
+            f.render_widget(Paragraph::new(line), row_rect);
             continue;
         }
 
@@ -3151,14 +2671,7 @@ fn draw_split_code_diff(
             in_active_chunk,
             &pal,
         );
-        let div_fg = if in_active_chunk {
-            pal.chunk_active_border
-        } else if in_chunk {
-            pal.chunk_border
-        } else {
-            pal.border_bright
-        };
-        spans.push(Span::styled("│", Style::default().fg(div_fg).bg(pal.bg)));
+        spans.push(Span::styled("│", Style::default().fg(pal.border).bg(pal.bg)));
         spans.extend(render_split_half(
             r.right.as_ref(),
             right_w,
@@ -3223,7 +2736,7 @@ fn draw_bottom_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
             .as_ref()
             .map(|s| s.short_ref.clone())
             .unwrap_or_else(|| "Current Hunk".to_string());
-        let tl = format!(" 💬 Ask AI · {target_lbl} ");
+        let tl = format!("  💬 Ask AI · {target_lbl}  ");
         let tw = tl.chars().count() as u16;
         s0.push(Span::styled(
             tl,
@@ -3248,7 +2761,7 @@ fn draw_bottom_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
             Style::default().fg(pal.fg).bg(pal.raised),
             HitAction::CycleAgent,
         );
-        push_sep(&mut s0, &mut x0, " ", Style::default().bg(pal.surface));
+        push_sep(&mut s0, &mut x0, "  ", Style::default().bg(pal.surface));
 
         if !app.ai_queue.is_empty() {
             push_button(
@@ -3260,7 +2773,7 @@ fn draw_bottom_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
                 Style::default().fg(pal.move_text).bg(pal.raised),
                 HitAction::ClearAiQueue,
             );
-            push_sep(&mut s0, &mut x0, " ", Style::default().bg(pal.surface));
+            push_sep(&mut s0, &mut x0, "  ", Style::default().bg(pal.surface));
         }
 
         push_button(
@@ -3272,7 +2785,7 @@ fn draw_bottom_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
             Style::default().fg(pal.add_text).bg(pal.raised),
             HitAction::QueueAiPrompt,
         );
-        push_sep(&mut s0, &mut x0, " ", Style::default().bg(pal.surface));
+        push_sep(&mut s0, &mut x0, "  ", Style::default().bg(pal.surface));
 
         push_button(
             &mut s0,
@@ -3286,7 +2799,7 @@ fn draw_bottom_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
                 .add_modifier(Modifier::BOLD),
             HitAction::SendAiPrompt,
         );
-        push_sep(&mut s0, &mut x0, " ", Style::default().bg(pal.surface));
+        push_sep(&mut s0, &mut x0, "  ", Style::default().bg(pal.surface));
 
         push_button(
             &mut s0,
@@ -3306,7 +2819,7 @@ fn draw_bottom_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
             height: 1,
         };
         let prompt_line = Line::from(vec![
-            Span::styled(" > ", Style::default().fg(pal.ask_text).bg(pal.bg)),
+            Span::styled("  > ", Style::default().fg(pal.ask_text).bg(pal.bg)),
             Span::styled(
                 format!("{}█", app.input_buffer),
                 Style::default().fg(pal.fg).bg(pal.bg),
@@ -3336,7 +2849,7 @@ fn draw_bottom_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
         let mut s0 = Vec::new();
         let mut x0 = r0.x;
 
-        let title = " ✓ Commit Changes ";
+        let title = "  ✓ Commit Changes  ";
         let tw = title.chars().count() as u16;
         s0.push(Span::styled(
             title,
@@ -3359,7 +2872,7 @@ fn draw_bottom_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
                 .add_modifier(Modifier::BOLD),
             HitAction::RunCommit { stage_all: false },
         );
-        push_sep(&mut s0, &mut x0, " ", Style::default().bg(pal.surface));
+        push_sep(&mut s0, &mut x0, "  ", Style::default().bg(pal.surface));
 
         push_button(
             &mut s0,
@@ -3370,7 +2883,7 @@ fn draw_bottom_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
             Style::default().fg(pal.ask_text).bg(pal.raised),
             HitAction::RunCommit { stage_all: true },
         );
-        push_sep(&mut s0, &mut x0, " ", Style::default().bg(pal.surface));
+        push_sep(&mut s0, &mut x0, "  ", Style::default().bg(pal.surface));
 
         push_button(
             &mut s0,
@@ -3391,7 +2904,7 @@ fn draw_bottom_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
         };
         let msg_line = Line::from(vec![
             Span::styled(
-                " Commit message: ",
+                "  Commit message: ",
                 Style::default().fg(pal.add_text).bg(pal.bg),
             ),
             Span::styled(
@@ -3406,7 +2919,6 @@ fn draw_bottom_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
         return;
     }
 
-    // Default single-row footer bar
     f.render_widget(
         Block::default().style(Style::default().bg(pal.chrome)),
         area,
@@ -3417,7 +2929,7 @@ fn draw_bottom_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
         let fg = if *is_err { pal.del_text } else { pal.add_text };
         f.render_widget(
             Paragraph::new(Span::styled(
-                format!(" ◆ {msg}"),
+                format!("   ◆ {msg}"),
                 Style::default()
                     .fg(fg)
                     .bg(pal.chrome)
@@ -3428,30 +2940,18 @@ fn draw_bottom_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
         return;
     }
 
-    let mut spans = Vec::new();
-    let mut fx = area.x;
-    let theme_pill = format!(" 🎨 {} ", pal.theme_name);
-    let tw = theme_pill.chars().count() as u16;
-    spans.push(Span::styled(
-        theme_pill,
-        Style::default()
-            .fg(pal.ask_text)
-            .bg(pal.raised)
-            .add_modifier(Modifier::BOLD),
-    ));
-    fx += tw;
+    let mut spans = vec![Span::styled("   ", Style::default().bg(pal.chrome))];
+    let mut fx = area.x + 3;
 
     for (k, desc) in [
-        (" j/k", "file "),
-        (" J/K", "scroll "),
-        (" n/p", "hunk "),
-        (" s/u/x", "stage/unstage/revert "),
-        (" v", "review "),
-        (" a", "ask AI "),
-        (" c", "commit "),
-        (" Tab", "split/unified "),
-        (" t", "TUI "),
-        (" q", "close"),
+        ("j/k", "file"),
+        ("n/p", "hunk"),
+        ("s", "stage"),
+        ("x", "revert"),
+        ("c", "commit"),
+        ("a", "ask AI"),
+        ("Tab", "view"),
+        ("q", "close"),
     ] {
         let kw = k.chars().count() as u16;
         let dw = desc.chars().count() as u16;
@@ -3463,10 +2963,10 @@ fn draw_bottom_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(
-            format!(":{desc}"),
-            Style::default().fg(pal.muted).bg(pal.chrome),
+            format!(" {desc}    "),
+            Style::default().fg(pal.dim).bg(pal.chrome),
         ));
-        fx += kw + 1 + dw;
+        fx += kw + 1 + dw + 4;
     }
     pad_spans_to_width(&mut spans, fx.saturating_sub(area.x), area.width, pal.chrome);
     f.render_widget(Paragraph::new(Line::from(spans)), area);
