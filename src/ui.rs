@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Stdout, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -39,9 +39,7 @@ use crate::theme::{
     LineSyntaxState, ThemePalette, detect_rex_active_theme_id, load_active_rex_palette,
     tokenize_syntax_segment,
 };
-use crate::types::{
-    ChunkInfo, DiffResponse, FileEntry, SplitCell, TextSegment,
-};
+use crate::types::{ChunkInfo, DiffResponse, FileEntry, SplitCell, TextSegment};
 
 #[derive(Debug, Clone)]
 pub struct UiOptions {
@@ -854,7 +852,7 @@ impl AppState {
     }
 }
 
-fn compute_repo_fingerprint(cwd: &std::path::Path) -> u64 {
+fn compute_repo_fingerprint(cwd: &Path) -> u64 {
     let Ok(root) = repo_root(cwd) else { return 0 };
     let git_dir = root.join(".git");
     let mut acc = 0u64;
@@ -965,7 +963,6 @@ fn run_event_loop(
                 _ => {}
             }
         } else {
-            // Periodic live sync: theme changes + active Rex terminal repo tracking
             if app.last_theme_check.elapsed() >= Duration::from_millis(1800) {
                 app.last_theme_check = Instant::now();
                 let (active_id, _) = detect_rex_active_theme_id();
@@ -1301,7 +1298,7 @@ fn handle_mouse_event(app: &mut AppState, mouse: MouseEvent) {
             }
         }
         MouseEventKind::ScrollDown => {
-            if app.sidebar_open && col < 34 {
+            if app.sidebar_open && col < 36 {
                 let max_f = app.current_files().len().saturating_sub(1);
                 app.file_scroll = (app.file_scroll + 2).min(max_f);
             } else if shift {
@@ -1311,7 +1308,7 @@ fn handle_mouse_event(app: &mut AppState, mouse: MouseEvent) {
             }
         }
         MouseEventKind::ScrollUp => {
-            if app.sidebar_open && col < 34 {
+            if app.sidebar_open && col < 36 {
                 app.file_scroll = app.file_scroll.saturating_sub(2);
             } else if shift {
                 app.h_scroll = app.h_scroll.saturating_sub(6);
@@ -1358,6 +1355,15 @@ fn push_sep(spans: &mut Vec<Span<'static>>, cur_x: &mut u16, text: &'static str,
     *cur_x += w;
 }
 
+fn pad_spans_to_width(spans: &mut Vec<Span<'static>>, cur_w: u16, target_w: u16, bg: Color) {
+    if cur_w < target_w {
+        spans.push(Span::styled(
+            " ".repeat((target_w - cur_w) as usize),
+            Style::default().bg(bg),
+        ));
+    }
+}
+
 fn draw_app(f: &mut Frame<'_>, app: &mut AppState) {
     app.hitboxes.clear();
     app.pending_kitty_rect = None;
@@ -1375,18 +1381,23 @@ fn draw_app(f: &mut Frame<'_>, app: &mut AppState) {
     let vert = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),
+            Constraint::Length(2), // Header bar + horizontal structural border
             Constraint::Min(6),
             Constraint::Length(bottom_h),
         ])
         .split(full);
 
-    draw_header_bar(f, app, vert[0]);
-
     let body = vert[1];
-    let show_sidebar = app.sidebar_open && body.width >= 68;
+    let show_sidebar = app.sidebar_open && body.width >= 72;
+    let side_w = if show_sidebar {
+        if body.width >= 130 { 36 } else { 30 }
+    } else {
+        0
+    };
+
+    draw_header_bar(f, app, vert[0], side_w);
+
     if show_sidebar {
-        let side_w = if body.width >= 120 { 34 } else { 28 };
         let horiz = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(side_w), Constraint::Min(30)])
@@ -1400,21 +1411,27 @@ fn draw_app(f: &mut Frame<'_>, app: &mut AppState) {
     draw_bottom_bar(f, app, vert[2]);
 }
 
-fn draw_header_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
+fn draw_header_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect, side_w: u16) {
     let pal = &app.palette;
+    let r0 = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: 1,
+    };
     f.render_widget(
         Block::default().style(Style::default().bg(pal.chrome)),
-        area,
+        r0,
     );
 
     let mut spans: Vec<Span<'static>> = Vec::new();
-    let mut x = area.x;
-    let y = area.y;
+    let mut x = r0.x;
+    let y = r0.y;
 
     let mode_tag = if app.opts.mode == "dock" {
-        " OmniDiff · DOCK "
+        " ◆ OmniDiff · DOCK "
     } else {
-        " OmniDiff "
+        " ◆ OmniDiff "
     };
     push_button(
         &mut spans,
@@ -1423,8 +1440,8 @@ fn draw_header_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
         &mut x,
         mode_tag.to_string(),
         Style::default()
-            .fg(pal.bg)
-            .bg(pal.accent)
+            .fg(Color::Rgb(12, 16, 26))
+            .bg(pal.ask_text)
             .add_modifier(Modifier::BOLD),
         HitAction::ToggleSidebar,
     );
@@ -1436,14 +1453,46 @@ fn draw_header_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "repo".to_string());
         let branch = st.branch.as_deref().unwrap_or("HEAD");
-        let pill = format!(" ⎇ {repo_name}:{branch} ");
+        let pill = format!(" ⎇ {repo_name} · {branch} ");
         let w = pill.chars().count() as u16;
         spans.push(Span::styled(
             pill,
-            Style::default().fg(pal.fg).bg(pal.raised),
+            Style::default()
+                .fg(pal.fg)
+                .bg(pal.raised)
+                .add_modifier(Modifier::BOLD),
         ));
         x += w;
-        push_sep(&mut spans, &mut x, " ", Style::default().bg(pal.chrome));
+        push_sep(&mut spans, &mut x, "  ", Style::default().bg(pal.chrome));
+
+        // Scope switcher pills right in the header for instant visibility
+        for (key, num_key, lbl, cnt) in [
+            ("all", "1", "All", st.all.len()),
+            ("unstaged", "2", "Unstaged", st.unstaged.len()),
+            ("staged", "3", "Staged", st.staged.len()),
+            ("commits", "4", "Commits", st.commits.len()),
+        ] {
+            let active = app.scope == key;
+            let text = format!(" {num_key}:{lbl} ({cnt}) ");
+            let style = if active {
+                Style::default()
+                    .fg(Color::Rgb(12, 16, 26))
+                    .bg(pal.accent)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(pal.muted).bg(pal.surface)
+            };
+            push_button(
+                &mut spans,
+                &mut app.hitboxes,
+                y,
+                &mut x,
+                text,
+                style,
+                HitAction::SelectScope(key.to_string()),
+            );
+            push_sep(&mut spans, &mut x, " ", Style::default().bg(pal.chrome));
+        }
 
         if st.undo_count > 0 {
             push_button(
@@ -1452,51 +1501,80 @@ fn draw_header_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
                 y,
                 &mut x,
                 format!(" ↶ Undo ({}) ", st.undo_count),
-                Style::default().fg(pal.warn_text).bg(pal.raised),
+                Style::default()
+                    .fg(pal.warn_text)
+                    .bg(pal.raised)
+                    .add_modifier(Modifier::BOLD),
                 HitAction::UndoTop,
             );
             push_sep(&mut spans, &mut x, " ", Style::default().bg(pal.chrome));
         }
     }
 
+    // Right-align the view/preset/window controls when space permits
     let preset_lbl = match app.preset.as_str() {
         "minimal" => " AST:Minimal ",
         "full" => " AST:Full ",
         _ => " AST:Auto ",
     };
+    let split_active = app.is_split_mode(app.viewport_cols as u16);
+    let view_lbl = if split_active {
+        " ▥ Split (Tab) "
+    } else {
+        " ▤ Unified (Tab) "
+    };
+    let wrap_lbl = if app.wrap_lines {
+        " ↵ Wrap:ON "
+    } else {
+        " ↵ Wrap:OFF "
+    };
+    let right_total_w = (preset_lbl.chars().count()
+        + 1
+        + view_lbl.chars().count()
+        + 1
+        + wrap_lbl.chars().count()
+        + 1
+        + " ⧉ TUI ".chars().count()
+        + 1
+        + " ↻ ".chars().count()
+        + 1
+        + " × Close ".chars().count()) as u16;
+
+    let used_w = x.saturating_sub(r0.x);
+    if used_w + right_total_w + 2 < r0.width {
+        let pad = r0.width - used_w - right_total_w - 1;
+        spans.push(Span::styled(
+            " ".repeat(pad as usize),
+            Style::default().bg(pal.chrome),
+        ));
+        x += pad;
+    }
+
     push_button(
         &mut spans,
         &mut app.hitboxes,
         y,
         &mut x,
         preset_lbl.to_string(),
-        Style::default().fg(pal.muted).bg(pal.surface),
+        Style::default().fg(pal.fg).bg(pal.raised),
         HitAction::CyclePreset,
     );
     push_sep(&mut spans, &mut x, " ", Style::default().bg(pal.chrome));
 
-    let split_active = app.is_split_mode(app.viewport_cols as u16);
-    let view_lbl = if split_active {
-        " ▥ Split "
-    } else {
-        " ▤ Unified "
-    };
     push_button(
         &mut spans,
         &mut app.hitboxes,
         y,
         &mut x,
         view_lbl.to_string(),
-        Style::default().fg(pal.fg).bg(pal.surface),
+        Style::default()
+            .fg(pal.ask_text)
+            .bg(pal.raised)
+            .add_modifier(Modifier::BOLD),
         HitAction::ToggleViewMode,
     );
     push_sep(&mut spans, &mut x, " ", Style::default().bg(pal.chrome));
 
-    let wrap_lbl = if app.wrap_lines {
-        " ↵ Wrap:ON "
-    } else {
-        " ↵ Wrap:OFF "
-    };
     push_button(
         &mut spans,
         &mut app.hitboxes,
@@ -1505,11 +1583,11 @@ fn draw_header_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
         wrap_lbl.to_string(),
         Style::default()
             .fg(if app.wrap_lines {
-                pal.ask_text
+                pal.add_text
             } else {
                 pal.muted
             })
-            .bg(pal.surface),
+            .bg(pal.raised),
         HitAction::ToggleWrap,
     );
     push_sep(&mut spans, &mut x, " ", Style::default().bg(pal.chrome));
@@ -1520,7 +1598,7 @@ fn draw_header_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
         y,
         &mut x,
         " ⧉ TUI ".to_string(),
-        Style::default().fg(pal.ask_text).bg(pal.surface),
+        Style::default().fg(pal.fg).bg(pal.raised),
         HitAction::LaunchTui,
     );
     push_sep(&mut spans, &mut x, " ", Style::default().bg(pal.chrome));
@@ -1531,7 +1609,7 @@ fn draw_header_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
         y,
         &mut x,
         " ↻ ".to_string(),
-        Style::default().fg(pal.muted).bg(pal.surface),
+        Style::default().fg(pal.fg).bg(pal.raised),
         HitAction::Refresh,
     );
     push_sep(&mut spans, &mut x, " ", Style::default().bg(pal.chrome));
@@ -1542,86 +1620,74 @@ fn draw_header_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
         y,
         &mut x,
         " × Close ".to_string(),
-        Style::default().fg(pal.del_text).bg(pal.surface),
+        Style::default()
+            .fg(pal.del_text)
+            .bg(pal.raised)
+            .add_modifier(Modifier::BOLD),
         HitAction::CloseApp,
     );
 
-    f.render_widget(Paragraph::new(Line::from(spans)), area);
+    f.render_widget(Paragraph::new(Line::from(spans)), r0);
+
+    // Row 1: Crisp horizontal border rule with T-junction at sidebar boundary
+    if area.height >= 2 {
+        let r1 = Rect {
+            x: area.x,
+            y: area.y + 1,
+            width: area.width,
+            height: 1,
+        };
+        let rule_str = if side_w > 0 && side_w < area.width {
+            let left_len = (side_w.saturating_sub(1)) as usize;
+            let right_len = (area.width.saturating_sub(side_w)) as usize;
+            format!("{}┬{}", "─".repeat(left_len), "─".repeat(right_len))
+        } else {
+            "─".repeat(area.width as usize)
+        };
+        f.render_widget(
+            Paragraph::new(Span::styled(
+                rule_str,
+                Style::default().fg(pal.border_bright).bg(pal.chrome),
+            )),
+            r1,
+        );
+    }
 }
 
 fn draw_sidebar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
     let pal = &app.palette;
     let block = Block::default()
         .borders(Borders::RIGHT)
-        .border_style(Style::default().fg(pal.border))
+        .border_style(Style::default().fg(pal.border_bright))
         .style(Style::default().bg(pal.surface));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    if inner.height < 3 || inner.width < 12 {
+    if inner.height < 4 || inner.width < 16 {
         return;
     }
 
-    // Row 0: Scope tabs
-    let tabs_rect = Rect {
+    // Row 0: Bulk Actions Bar (fits cleanly inside 29+ cols without clipping)
+    let sub_rect = Rect {
         x: inner.x,
         y: inner.y,
         width: inner.width,
         height: 1,
     };
-    let (all_n, unst_n, stag_n, com_n) = app
-        .status
-        .as_ref()
-        .map(|s| (s.all.len(), s.unstaged.len(), s.staged.len(), s.commits.len()))
-        .unwrap_or((0, 0, 0, 0));
-
-    let mut tab_spans = Vec::new();
-    let mut tx = tabs_rect.x;
-    for (key, lbl, cnt) in [
-        ("all", "All", all_n),
-        ("unstaged", "Unst", unst_n),
-        ("staged", "Stag", stag_n),
-        ("commits", "Hist", com_n),
-    ] {
-        let active = app.scope == key;
-        let text = format!(" {lbl}:{cnt} ");
-        let st = if active {
-            Style::default()
-                .fg(pal.bg)
-                .bg(pal.accent)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(pal.muted).bg(pal.surface)
-        };
-        push_button(
-            &mut tab_spans,
-            &mut app.hitboxes,
-            tabs_rect.y,
-            &mut tx,
-            text,
-            st,
-            HitAction::SelectScope(key.to_string()),
-        );
-    }
-    f.render_widget(Paragraph::new(Line::from(tab_spans)), tabs_rect);
-
-    // Row 1: Bulk action bar
-    let sub_rect = Rect {
-        x: inner.x,
-        y: inner.y + 1,
-        width: inner.width,
-        height: 1,
-    };
     let mut sub_spans = Vec::new();
     let mut sx = sub_rect.x;
+    push_sep(&mut sub_spans, &mut sx, " ", Style::default().bg(pal.surface));
     if app.scope != "commits" {
         push_button(
             &mut sub_spans,
             &mut app.hitboxes,
             sub_rect.y,
             &mut sx,
-            " + Stage All ".to_string(),
-            Style::default().fg(pal.add_text).bg(pal.raised),
+            " +Stage All ".to_string(),
+            Style::default()
+                .fg(pal.add_text)
+                .bg(pal.raised)
+                .add_modifier(Modifier::BOLD),
             HitAction::StageAll,
         );
         push_sep(&mut sub_spans, &mut sx, " ", Style::default().bg(pal.surface));
@@ -1630,7 +1696,7 @@ fn draw_sidebar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
             &mut app.hitboxes,
             sub_rect.y,
             &mut sx,
-            " - Unstage ".to_string(),
+            " -Unstage ".to_string(),
             Style::default().fg(pal.warn_text).bg(pal.raised),
             HitAction::UnstageAll,
         );
@@ -1640,17 +1706,49 @@ fn draw_sidebar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
             &mut app.hitboxes,
             sub_rect.y,
             &mut sx,
-            " ✓ Commit ".to_string(),
-            Style::default().fg(pal.ask_text).bg(pal.raised),
+            " ✓Commit ".to_string(),
+            Style::default()
+                .fg(pal.ask_text)
+                .bg(pal.raised)
+                .add_modifier(Modifier::BOLD),
             HitAction::OpenCommit,
         );
     } else {
         sub_spans.push(Span::styled(
-            " Recent Commits (click to inspect)",
-            Style::default().fg(pal.dim),
+            " COMMIT HISTORY",
+            Style::default()
+                .fg(pal.ask_text)
+                .add_modifier(Modifier::BOLD),
         ));
     }
     f.render_widget(Paragraph::new(Line::from(sub_spans)), sub_rect);
+
+    // Row 1: Section Header Rule
+    let hdr_rect = Rect {
+        x: inner.x,
+        y: inner.y + 1,
+        width: inner.width,
+        height: 1,
+    };
+    let file_count = app.current_files().len();
+    let sec_title = format!("── FILES ({file_count}) ");
+    let sec_pad = (inner.width as usize).saturating_sub(sec_title.chars().count());
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                sec_title,
+                Style::default()
+                    .fg(pal.muted)
+                    .bg(pal.surface)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "─".repeat(sec_pad),
+                Style::default().fg(pal.border).bg(pal.surface),
+            ),
+        ])),
+        hdr_rect,
+    );
 
     let mut list_top = inner.y + 2;
     let mut list_h = inner.height.saturating_sub(2);
@@ -1675,12 +1773,17 @@ fn draw_sidebar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
             } else {
                 pal.surface
             };
-            let max_subj = (inner.width as usize).saturating_sub(10);
+            let bar = if is_sel { "▌" } else { " " };
+            let max_subj = (inner.width as usize).saturating_sub(11);
             let subj: String = c.subject.chars().take(max_subj).collect();
             let line = Line::from(vec![
+                Span::styled(bar, Style::default().fg(pal.ask_text).bg(bg)),
                 Span::styled(
-                    format!(" {} ", c.short),
-                    Style::default().fg(pal.ask_text).bg(bg),
+                    format!("{} ", c.short),
+                    Style::default()
+                        .fg(pal.ask_text)
+                        .bg(bg)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(subj, Style::default().fg(pal.fg).bg(bg)),
             ]);
@@ -1707,8 +1810,8 @@ fn draw_sidebar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
         };
         f.render_widget(
             Paragraph::new(Span::styled(
-                " Working tree clean ✓",
-                Style::default().fg(pal.dim),
+                "  ✓ Working tree clean",
+                Style::default().fg(pal.add_text),
             )),
             empty_rect,
         );
@@ -1748,27 +1851,39 @@ fn draw_sidebar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
             "A" => pal.add_text,
             "D" => pal.del_text,
             "R" | "C" => pal.move_text,
-            "?" => pal.dim,
+            "?" => pal.warn_text,
             "U" => pal.warn_text,
             _ => pal.upd_text,
         };
 
         let fname = file.path.rsplit('/').next().unwrap_or(&file.path);
+        let sel_bar = if selected { "▌" } else { " " };
         let rev_mark = if file.reviewed { "✓" } else { " " };
-        let action_cols = if app.scope == "commits" { 0usize } else { 7usize };
-        let stat_str = if file.binary {
-            "BIN".to_string()
+        let action_cols = if app.scope == "commits" { 0usize } else { 6usize };
+
+        let add_s = format!("+{}", file.add);
+        let del_s = format!("-{}", file.del);
+        let stat_len = if file.binary {
+            4
         } else {
-            format!("+{} -{}", file.add, file.del)
+            add_s.len() + 1 + del_s.len() + 1
         };
+
         let avail_name = (inner.width as usize)
-            .saturating_sub(4 + stat_str.len() + action_cols)
+            .saturating_sub(5 + stat_len + action_cols)
             .max(6);
         let disp_name: String = fname.chars().take(avail_name).collect();
 
         let mut spans = vec![
             Span::styled(
-                format!("{}{}", rev_mark, file.status),
+                sel_bar,
+                Style::default()
+                    .fg(pal.ask_text)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{rev_mark}{}", file.status),
                 Style::default()
                     .fg(if file.reviewed {
                         pal.add_text
@@ -1782,15 +1897,31 @@ fn draw_sidebar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
                 format!(" {:<width$} ", disp_name, width = avail_name),
                 Style::default()
                     .fg(if selected { pal.fg } else { pal.muted })
-                    .bg(bg),
-            ),
-            Span::styled(
-                format!("{stat_str} "),
-                Style::default().fg(pal.dim).bg(bg),
+                    .bg(bg)
+                    .add_modifier(if selected {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::empty()
+                    }),
             ),
         ];
 
-        // Main row click selects file
+        if file.binary {
+            spans.push(Span::styled(
+                "BIN ",
+                Style::default().fg(pal.warn_text).bg(bg),
+            ));
+        } else {
+            spans.push(Span::styled(
+                format!("{add_s} "),
+                Style::default().fg(pal.add_text).bg(bg),
+            ));
+            spans.push(Span::styled(
+                format!("{del_s} "),
+                Style::default().fg(pal.del_text).bg(bg),
+            ));
+        }
+
         let main_w = inner.width.saturating_sub(action_cols as u16);
         app.hitboxes.push(HitBox {
             rect: Rect {
@@ -1811,7 +1942,10 @@ fn draw_sidebar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
                     ry,
                     &mut bx,
                     "[+]".to_string(),
-                    Style::default().fg(pal.add_text).bg(bg),
+                    Style::default()
+                        .fg(pal.add_text)
+                        .bg(bg)
+                        .add_modifier(Modifier::BOLD),
                     HitAction::StageFile(idx),
                 );
             } else if file.staged_part {
@@ -1821,7 +1955,10 @@ fn draw_sidebar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
                     ry,
                     &mut bx,
                     "[-]".to_string(),
-                    Style::default().fg(pal.warn_text).bg(bg),
+                    Style::default()
+                        .fg(pal.warn_text)
+                        .bg(bg)
+                        .add_modifier(Modifier::BOLD),
                     HitAction::UnstageFile(idx),
                 );
             }
@@ -1845,15 +1982,15 @@ fn draw_sidebar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
 
 fn draw_diff_pane(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
     let pal = &app.palette;
-    if area.height < 4 || area.width < 20 {
+    if area.height < 5 || area.width < 20 {
         return;
     }
 
     let Some(diff) = app.diff.clone() else {
         f.render_widget(
             Paragraph::new(Span::styled(
-                "  Select a changed file to inspect its AST diff.",
-                Style::default().fg(pal.dim),
+                "  Select a changed file on the left to inspect its structural AST diff.",
+                Style::default().fg(pal.muted),
             )),
             Rect {
                 x: area.x,
@@ -1867,10 +2004,11 @@ fn draw_diff_pane(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
 
     let layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Min(4)])
+        .constraints([Constraint::Length(3), Constraint::Min(4)])
         .split(area);
 
-    draw_sticky_hunk_toolbar(f, app, &diff, layout[0]);
+    let split_active = app.is_split_mode(area.width);
+    draw_sticky_hunk_toolbar(f, app, &diff, layout[0], split_active);
 
     let vp = layout[1];
     app.viewport_rows = vp.height as usize;
@@ -1880,7 +2018,7 @@ fn draw_diff_pane(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
         draw_picture_diff_card(f, app, &diff, vp);
     } else if diff.binary {
         draw_binary_card(f, app, &diff, vp);
-    } else if app.is_split_mode(vp.width) {
+    } else if split_active {
         draw_split_code_diff(f, app, &diff, vp);
     } else {
         draw_unified_code_diff(f, app, &diff, vp);
@@ -1892,6 +2030,7 @@ fn draw_sticky_hunk_toolbar(
     app: &mut AppState,
     diff: &DiffResponse,
     area: Rect,
+    split_active: bool,
 ) {
     let pal = &app.palette;
     f.render_widget(
@@ -1899,7 +2038,7 @@ fn draw_sticky_hunk_toolbar(
         area,
     );
 
-    // Row 0: File path + language + semantic summary + token counts + Reviewed toggle
+    // Row 0: File path + language + semantic summary + token counts + Reviewed & Ask AI buttons
     let r0 = Rect {
         x: area.x,
         y: area.y,
@@ -1910,9 +2049,9 @@ fn draw_sticky_hunk_toolbar(
     let mut x0 = r0.x;
 
     let path_disp = if let Some(old) = &diff.old_path {
-        format!(" {old} → {} ", diff.path)
+        format!(" 📄 {old} → {} ", diff.path)
     } else {
-        format!(" {} ", diff.path)
+        format!(" 📄 {} ", diff.path)
     };
     let pw = path_disp.chars().count() as u16;
     s0.push(Span::styled(
@@ -1923,13 +2062,17 @@ fn draw_sticky_hunk_toolbar(
             .add_modifier(Modifier::BOLD),
     ));
     x0 += pw;
+    push_sep(&mut s0, &mut x0, " ", Style::default().bg(pal.surface));
 
     if let Some(lang) = &diff.language {
         let lp = format!(" {lang} ");
         let lw = lp.chars().count() as u16;
         s0.push(Span::styled(
             lp,
-            Style::default().fg(pal.ask_text).bg(pal.raised),
+            Style::default()
+                .fg(pal.ask_text)
+                .bg(pal.raised)
+                .add_modifier(Modifier::BOLD),
         ));
         x0 += lw;
         push_sep(&mut s0, &mut x0, " ", Style::default().bg(pal.surface));
@@ -1948,20 +2091,28 @@ fn draw_sticky_hunk_toolbar(
 
     let c = &diff.counts;
     for (txt, col) in [
-        (format!("+{} ", c.insertions), pal.add_text),
-        (format!("-{} ", c.deletions), pal.del_text),
-        (format!("~{} ", c.updates), pal.upd_text),
-        (format!("⇄{} ", c.moves), pal.move_text),
+        (format!(" +{} ", c.insertions), pal.add_text),
+        (format!(" -{} ", c.deletions), pal.del_text),
+        (format!(" ~{} ", c.updates), pal.upd_text),
+        (format!(" ⇄{} ", c.moves), pal.move_text),
     ] {
         let w = txt.chars().count() as u16;
-        s0.push(Span::styled(txt, Style::default().fg(col).bg(pal.surface)));
+        s0.push(Span::styled(
+            txt,
+            Style::default()
+                .fg(col)
+                .bg(pal.surface)
+                .add_modifier(Modifier::BOLD),
+        ));
         x0 += w;
     }
 
+    push_sep(&mut s0, &mut x0, "  ", Style::default().bg(pal.surface));
+
     let rev_lbl = if diff.file_reviewed {
-        " ✓ Reviewed "
+        " ✓ Reviewed (v) "
     } else {
-        " ○ Mark Reviewed "
+        " ○ Mark Reviewed (v) "
     };
     let rev_style = if diff.file_reviewed {
         Style::default()
@@ -1969,7 +2120,7 @@ fn draw_sticky_hunk_toolbar(
             .bg(pal.reviewed_bg)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(pal.muted).bg(pal.raised)
+        Style::default().fg(pal.fg).bg(pal.raised)
     };
     push_button(
         &mut s0,
@@ -1980,9 +2131,23 @@ fn draw_sticky_hunk_toolbar(
         rev_style,
         HitAction::ToggleFileReview,
     );
+    push_sep(&mut s0, &mut x0, " ", Style::default().bg(pal.surface));
+
+    push_button(
+        &mut s0,
+        &mut app.hitboxes,
+        r0.y,
+        &mut x0,
+        " 💬 Ask AI (a) ".to_string(),
+        Style::default()
+            .fg(Color::Rgb(12, 16, 26))
+            .bg(pal.ask_text)
+            .add_modifier(Modifier::BOLD),
+        HitAction::OpenAskAi,
+    );
     f.render_widget(Paragraph::new(Line::from(s0)), r0);
 
-    // Row 1: Hunk stepper + breadcrumb + Ask AI + Stage/Unstage/Revert
+    // Row 1: Hunk stepper + breadcrumb + Move jump + Stage/Unstage/Revert
     let r1 = Rect {
         x: area.x,
         y: area.y + 1,
@@ -1991,6 +2156,7 @@ fn draw_sticky_hunk_toolbar(
     };
     let mut s1: Vec<Span<'static>> = Vec::new();
     let mut x1 = r1.x;
+    push_sep(&mut s1, &mut x1, " ", Style::default().bg(pal.surface));
 
     let total_chunks = diff.chunks.len();
     let cur_hunk = if total_chunks == 0 {
@@ -2004,7 +2170,7 @@ fn draw_sticky_hunk_toolbar(
         &mut app.hitboxes,
         r1.y,
         &mut x1,
-        " ◄ ".to_string(),
+        " ◄ Prev ".to_string(),
         Style::default().fg(pal.fg).bg(pal.raised),
         HitAction::PrevHunk,
     );
@@ -2012,7 +2178,10 @@ fn draw_sticky_hunk_toolbar(
     let sw = step_txt.chars().count() as u16;
     s1.push(Span::styled(
         step_txt,
-        Style::default().fg(pal.chunk_range_text).bg(pal.surface),
+        Style::default()
+            .fg(pal.ask_text)
+            .bg(pal.chunk_bg)
+            .add_modifier(Modifier::BOLD),
     ));
     x1 += sw;
     push_button(
@@ -2020,20 +2189,20 @@ fn draw_sticky_hunk_toolbar(
         &mut app.hitboxes,
         r1.y,
         &mut x1,
-        " ► ".to_string(),
+        " Next ► ".to_string(),
         Style::default().fg(pal.fg).bg(pal.raised),
         HitAction::NextHunk,
     );
-    push_sep(&mut s1, &mut x1, " ", Style::default().bg(pal.surface));
+    push_sep(&mut s1, &mut x1, "  ", Style::default().bg(pal.surface));
 
     if let Some(chunk) = diff.chunks.get(app.active_chunk) {
         if let Some(bc) = &chunk.breadcrumb {
-            let bc_trunc: String = bc.chars().take(34).collect();
+            let bc_trunc: String = bc.chars().take(38).collect();
             let bt = format!(" @ {bc_trunc} ");
             let bw = bt.chars().count() as u16;
             s1.push(Span::styled(
                 bt,
-                Style::default().fg(pal.muted).bg(pal.raised),
+                Style::default().fg(pal.fg).bg(pal.raised),
             ));
             x1 += bw;
             push_sep(&mut s1, &mut x1, " ", Style::default().bg(pal.surface));
@@ -2046,27 +2215,16 @@ fn draw_sticky_hunk_toolbar(
                 &mut app.hitboxes,
                 r1.y,
                 &mut x1,
-                format!(" ⇄ Moved {} L{} ", mi.direction, mi.start_line),
-                Style::default().fg(pal.move_text).bg(pal.raised),
+                format!(" ⇄ Moved {} L{} (m) ", mi.direction, mi.start_line),
+                Style::default()
+                    .fg(pal.move_text)
+                    .bg(pal.raised)
+                    .add_modifier(Modifier::BOLD),
                 HitAction::JumpMove(tc),
             );
             push_sep(&mut s1, &mut x1, " ", Style::default().bg(pal.surface));
         }
     }
-
-    push_button(
-        &mut s1,
-        &mut app.hitboxes,
-        r1.y,
-        &mut x1,
-        " 💬 Ask AI (a) ".to_string(),
-        Style::default()
-            .fg(pal.ask_text)
-            .bg(pal.ask_bg)
-            .add_modifier(Modifier::BOLD),
-        HitAction::OpenAskAi,
-    );
-    push_sep(&mut s1, &mut x1, " ", Style::default().bg(pal.surface));
 
     if app.scope != "commits" && total_chunks > 0 {
         if app.scope != "staged" {
@@ -2076,7 +2234,10 @@ fn draw_sticky_hunk_toolbar(
                 r1.y,
                 &mut x1,
                 " + Stage Hunk (s) ".to_string(),
-                Style::default().fg(pal.add_text).bg(pal.raised),
+                Style::default()
+                    .fg(pal.add_text)
+                    .bg(pal.raised)
+                    .add_modifier(Modifier::BOLD),
                 HitAction::StageActiveHunk,
             );
             push_sep(&mut s1, &mut x1, " ", Style::default().bg(pal.surface));
@@ -2105,6 +2266,74 @@ fn draw_sticky_hunk_toolbar(
     }
 
     f.render_widget(Paragraph::new(Line::from(s1)), r1);
+
+    // Row 2: Column Header Divider Bar (`BEFORE` vs `AFTER` in Split Mode, or Unified rule)
+    let r2 = Rect {
+        x: area.x,
+        y: area.y + 2,
+        width: area.width,
+        height: 1,
+    };
+    let total_w = area.width as usize;
+    if split_active && !diff.binary && diff.picture_media.is_none() {
+        let left_w = total_w.saturating_sub(1) / 2;
+        let right_w = total_w.saturating_sub(1).saturating_sub(left_w);
+        let left_lbl = match app.scope.as_str() {
+            "unstaged" => "── BEFORE (INDEX) ",
+            "commits" => "── BEFORE (PARENT) ",
+            _ => "── BEFORE (HEAD) ",
+        };
+        let right_lbl = match app.scope.as_str() {
+            "staged" => "── AFTER (STAGED INDEX) ",
+            "commits" => "── AFTER (COMMIT) ",
+            _ => "── AFTER (WORKING TREE) ",
+        };
+        let l_pad = left_w.saturating_sub(left_lbl.chars().count());
+        let r_pad = right_w.saturating_sub(right_lbl.chars().count());
+        let line = Line::from(vec![
+            Span::styled(
+                left_lbl,
+                Style::default()
+                    .fg(pal.del_text)
+                    .bg(pal.chrome)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "─".repeat(l_pad),
+                Style::default().fg(pal.border_bright).bg(pal.chrome),
+            ),
+            Span::styled("┬", Style::default().fg(pal.border_bright).bg(pal.chrome)),
+            Span::styled(
+                right_lbl,
+                Style::default()
+                    .fg(pal.add_text)
+                    .bg(pal.chrome)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "─".repeat(r_pad),
+                Style::default().fg(pal.border_bright).bg(pal.chrome),
+            ),
+        ]);
+        f.render_widget(Paragraph::new(line), r2);
+    } else {
+        let lbl = "── AST DIFF ";
+        let pad = total_w.saturating_sub(lbl.chars().count());
+        let line = Line::from(vec![
+            Span::styled(
+                lbl,
+                Style::default()
+                    .fg(pal.ask_text)
+                    .bg(pal.chrome)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "─".repeat(pad),
+                Style::default().fg(pal.border_bright).bg(pal.chrome),
+            ),
+        ]);
+        f.render_widget(Paragraph::new(line), r2);
+    }
 }
 
 fn draw_picture_diff_card(
@@ -2145,8 +2374,8 @@ fn draw_picture_diff_card(
         let active = app.kitty_mode == mode;
         let style = if active {
             Style::default()
-                .fg(pal.bg)
-                .bg(pal.accent)
+                .fg(Color::Rgb(12, 16, 26))
+                .bg(pal.ask_text)
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(pal.muted).bg(pal.raised)
@@ -2210,7 +2439,6 @@ fn draw_picture_diff_card(
 
     f.render_widget(Paragraph::new(Line::from(bar_spans)), bar_rect);
 
-    // Row 1: Pixel statistics summary
     let stat_rect = Rect {
         x: area.x,
         y: area.y + 1,
@@ -2257,15 +2485,10 @@ fn draw_binary_card(f: &mut Frame<'_>, app: &mut AppState, diff: &DiffResponse, 
     let mut lines = vec![
         Line::from(Span::styled(
             format!(" Binary / Container Diff: {}", diff.path),
-            Style::default()
-                .fg(pal.fg)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(pal.fg).add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
-            format!(
-                " Engine: {} · Signature: {}",
-                diff.engine, diff.file_sig
-            ),
+            format!(" Engine: {} · Signature: {}", diff.engine, diff.file_sig),
             Style::default().fg(pal.muted),
         )),
     ];
@@ -2282,6 +2505,46 @@ fn draw_binary_card(f: &mut Frame<'_>, app: &mut AppState, diff: &DiffResponse, 
     f.render_widget(Paragraph::new(lines), area);
 }
 
+fn render_elide_row(
+    f: &mut Frame<'_>,
+    app: &mut AppState,
+    fold_id: Option<&str>,
+    count: usize,
+    row_rect: Rect,
+) {
+    let pal = &app.palette;
+    let label = format!(" ↕ {count} unchanged lines (click to expand) ");
+    let total_w = row_rect.width as usize;
+    let lbl_w = label.chars().count();
+    let left_rule = total_w.saturating_sub(lbl_w) / 2;
+    let right_rule = total_w.saturating_sub(lbl_w).saturating_sub(left_rule);
+
+    let line = Line::from(vec![
+        Span::styled(
+            "─".repeat(left_rule),
+            Style::default().fg(pal.fold_rule).bg(pal.fold_bg),
+        ),
+        Span::styled(
+            label,
+            Style::default()
+                .fg(pal.fold_fg)
+                .bg(pal.fold_bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "─".repeat(right_rule),
+            Style::default().fg(pal.fold_rule).bg(pal.fold_bg),
+        ),
+    ]);
+    f.render_widget(Paragraph::new(line), row_rect);
+    if let Some(fid) = fold_id.filter(|s| !s.is_empty()) {
+        app.hitboxes.push(HitBox {
+            rect: row_rect,
+            action: HitAction::ExpandFold(fid.to_string()),
+        });
+    }
+}
+
 fn render_chunk_banner_line(
     app: &mut AppState,
     chunk: &ChunkInfo,
@@ -2295,41 +2558,54 @@ fn render_chunk_banner_line(
     } else {
         pal.chunk_bg
     };
-    let border_fg = if is_active {
-        pal.chunk_active_border
+    let rail_fg = if is_active {
+        pal.chunk_active_rail
     } else {
-        pal.chunk_border
+        pal.chunk_rail
+    };
+    let badge_fg = if is_active {
+        pal.ask_text
+    } else {
+        pal.chunk_range_text
     };
 
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut x = row_rect.x;
     let y = row_rect.y;
 
+    let prefix = if is_active { "▌ ▸ " } else { "▌   " };
     let lead = format!(
-        "▌@@ Hunk {}/{} (-{},{} +{},{}){} ",
+        "{prefix}Hunk {}/{}  @@ -{},{} +{},{} @@{} ",
         chunk.index + 1,
         total_chunks,
         chunk.b_start + 1,
         chunk.b_end.saturating_sub(chunk.b_start),
         chunk.a_start + 1,
         chunk.a_end.saturating_sub(chunk.a_start),
-        if chunk.staged { " [STAGED]" } else { "" }
+        if chunk.staged { "  [✓ STAGED]" } else { "" }
     );
     let lw = lead.chars().count() as u16;
     spans.push(Span::styled(
         lead,
         Style::default()
-            .fg(border_fg)
+            .fg(badge_fg)
             .bg(bg)
             .add_modifier(Modifier::BOLD),
     ));
     x += lw;
 
     if let Some(bc) = &chunk.breadcrumb {
-        let bc_s: String = bc.chars().take(36).collect();
-        let txt = format!("@ {bc_s} ");
+        let max_bc = (row_rect.width as usize).saturating_sub(68).clamp(16, 48);
+        let bc_s: String = bc.chars().take(max_bc).collect();
+        let txt = format!(" @ {bc_s}  ");
         let w = txt.chars().count() as u16;
-        spans.push(Span::styled(txt, Style::default().fg(pal.fg).bg(bg)));
+        spans.push(Span::styled(
+            txt,
+            Style::default()
+                .fg(pal.fg)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        ));
         x += w;
     }
 
@@ -2341,8 +2617,11 @@ fn render_chunk_banner_line(
             &mut app.hitboxes,
             y,
             &mut x,
-            format!(" ⇄ Moved {} L{} ", mi.direction, mi.start_line),
-            Style::default().fg(pal.move_text).bg(bg),
+            format!(" [⇄ Moved {} L{}] ", mi.direction, mi.start_line),
+            Style::default()
+                .fg(pal.move_text)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
             HitAction::JumpMove(tc),
         );
     }
@@ -2354,8 +2633,11 @@ fn render_chunk_banner_line(
                 &mut app.hitboxes,
                 y,
                 &mut x,
-                " [+Stage] ".to_string(),
-                Style::default().fg(pal.add_text).bg(bg),
+                " [+ Stage] ".to_string(),
+                Style::default()
+                    .fg(pal.add_text)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD),
                 HitAction::StageHunkIdx(chunk.index),
             );
         }
@@ -2365,8 +2647,11 @@ fn render_chunk_banner_line(
                 &mut app.hitboxes,
                 y,
                 &mut x,
-                " [-Unstage] ".to_string(),
-                Style::default().fg(pal.warn_text).bg(bg),
+                " [- Unstage] ".to_string(),
+                Style::default()
+                    .fg(pal.warn_text)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD),
                 HitAction::UnstageHunkIdx(chunk.index),
             );
         }
@@ -2376,7 +2661,7 @@ fn render_chunk_banner_line(
                 &mut app.hitboxes,
                 y,
                 &mut x,
-                " [↶Revert] ".to_string(),
+                " [↶ Revert] ".to_string(),
                 Style::default().fg(pal.del_text).bg(bg),
                 HitAction::RevertHunkIdx(chunk.index),
             );
@@ -2389,9 +2674,9 @@ fn render_chunk_banner_line(
         y,
         &mut x,
         if chunk.reviewed {
-            " [✓Reviewed] ".to_string()
+            " [✓ Reviewed] ".to_string()
         } else {
-            " [○Review] ".to_string()
+            " [○ Review] ".to_string()
         },
         Style::default()
             .fg(if chunk.reviewed {
@@ -2403,11 +2688,45 @@ fn render_chunk_banner_line(
         HitAction::ToggleChunkReview(chunk.index),
     );
 
+    let used_w = x.saturating_sub(row_rect.x);
+    if used_w < row_rect.width {
+        let rem = (row_rect.width - used_w) as usize;
+        spans.push(Span::styled(
+            " ".repeat(rem),
+            Style::default().fg(rail_fg).bg(bg),
+        ));
+    }
+
     Line::from(spans)
+}
+
+fn has_intraline_token_highlights(segs: &[TextSegment], row_bg_tag: Option<&str>) -> bool {
+    let non_ws: Vec<&TextSegment> = segs.iter().filter(|s| !s.t.trim().is_empty()).collect();
+    if non_ws.is_empty() {
+        return false;
+    }
+    if non_ws
+        .iter()
+        .any(|s| matches!(s.op.as_deref(), Some("u") | Some("m")))
+    {
+        return true;
+    }
+    let has_plain = non_ws.iter().any(|s| s.op.is_none());
+    let has_op = non_ws.iter().any(|s| s.op.is_some());
+    if has_plain && has_op {
+        return true;
+    }
+    // If every non-whitespace segment on a pure "+" or "-" line has the same "i"/"d" op as the row,
+    // use the smooth full-width row background rather than painting a second box around the text.
+    if matches!(row_bg_tag, Some("i") | Some("d")) {
+        return false;
+    }
+    has_op
 }
 
 fn style_code_segments(
     segs: &[TextSegment],
+    row_bg_tag: Option<&str>,
     row_bg: Color,
     pal: &ThemePalette,
     h_scroll: usize,
@@ -2415,14 +2734,26 @@ fn style_code_segments(
 ) -> Vec<Span<'static>> {
     let mut state = LineSyntaxState::default();
     let mut raw_tokens: Vec<(String, Color, Color, bool)> = Vec::new();
+    let paint_intraline = has_intraline_token_highlights(segs, row_bg_tag);
 
     for seg in segs {
-        let (seg_bg, on_hi, bold) = match seg.op.as_deref() {
-            Some("i") => (pal.seg_i, true, true),
-            Some("d") => (pal.seg_d, true, true),
-            Some("u") => (pal.seg_u, true, true),
-            Some("m") => (pal.seg_m, true, false),
-            _ => (row_bg, false, false),
+        let (seg_bg, on_hi, bold) = if paint_intraline {
+            match seg.op.as_deref() {
+                Some("i") => (pal.seg_i, true, true),
+                Some("d") => (pal.seg_d, true, true),
+                Some("u") => {
+                    let b = match row_bg_tag {
+                        Some("d") => pal.seg_d,
+                        Some("i") => pal.seg_i,
+                        _ => pal.seg_u,
+                    };
+                    (b, true, true)
+                }
+                Some("m") => (pal.seg_m, true, false),
+                _ => (row_bg, false, false),
+            }
+        } else {
+            (row_bg, false, false)
         };
         for (tok_str, fg) in tokenize_syntax_segment(&seg.t, pal, &mut state, on_hi) {
             raw_tokens.push((tok_str, fg, seg_bg, bold));
@@ -2524,28 +2855,18 @@ fn draw_unified_code_diff(
         }
 
         if r.kind == "elide" {
-            let fold_id = r.fold_id.clone().unwrap_or_default();
-            let text = format!(
-                "  ⋯ {} unchanged lines (click to expand) ⋯",
-                r.count.unwrap_or(0)
-            );
-            f.render_widget(
-                Paragraph::new(Span::styled(
-                    text,
-                    Style::default().fg(pal.dim).bg(pal.fold_bg),
-                ))
-                .style(Style::default().bg(pal.fold_bg)),
+            render_elide_row(
+                f,
+                app,
+                r.fold_id.as_deref(),
+                r.count.unwrap_or(0),
                 row_rect,
             );
-            if !fold_id.is_empty() {
-                app.hitboxes.push(HitBox {
-                    rect: row_rect,
-                    action: HitAction::ExpandFold(fold_id),
-                });
-            }
             continue;
         }
 
+        let in_chunk = r.chunk_idx.is_some();
+        let in_active_chunk = r.chunk_idx == Some(app.active_chunk);
         let is_selected = app
             .selection
             .as_ref()
@@ -2570,9 +2891,13 @@ fn draw_unified_code_diff(
         };
 
         let left_bar = if is_selected {
-            Span::styled("▐", Style::default().fg(pal.ask_text).bg(base_bg))
+            Span::styled("▌", Style::default().fg(pal.ask_text).bg(base_bg))
         } else if is_queued {
-            Span::styled("▐", Style::default().fg(pal.move_text).bg(base_bg))
+            Span::styled("▌", Style::default().fg(pal.move_text).bg(base_bg))
+        } else if in_active_chunk {
+            Span::styled("▌", Style::default().fg(pal.chunk_active_rail).bg(base_bg))
+        } else if in_chunk {
+            Span::styled("▏", Style::default().fg(pal.chunk_rail).bg(base_bg))
         } else {
             Span::styled(" ", Style::default().bg(base_bg))
         };
@@ -2590,27 +2915,40 @@ fn draw_unified_code_diff(
             "+" => pal.add_text,
             "-" => pal.del_text,
             "⇄" => pal.move_text,
-            _ => pal.dim,
+            _ => pal.line_num,
+        };
+        let num_fg = if in_chunk {
+            pal.line_num_active
+        } else {
+            pal.line_num
         };
 
         let mut spans = vec![
             left_bar,
             Span::styled(
                 format!("{old_s} {new_s} "),
-                Style::default().fg(pal.dim).bg(base_bg),
+                Style::default().fg(num_fg).bg(base_bg),
             ),
             Span::styled(
-                format!("{marker} "),
+                marker.to_string(),
                 Style::default()
                     .fg(marker_fg)
                     .bg(base_bg)
                     .add_modifier(Modifier::BOLD),
             ),
+            Span::styled(" │ ", Style::default().fg(pal.border).bg(base_bg)),
         ];
 
-        let gutter_w = 13usize;
+        let gutter_w = 15usize;
         let code_w = (area.width as usize).saturating_sub(gutter_w);
-        spans.extend(style_code_segments(&r.segs, base_bg, &pal, h_scroll, code_w));
+        spans.extend(style_code_segments(
+            &r.segs,
+            r.row_bg.as_deref(),
+            base_bg,
+            &pal,
+            h_scroll,
+            code_w,
+        ));
 
         f.render_widget(
             Paragraph::new(Line::from(spans)).style(Style::default().bg(base_bg)),
@@ -2626,19 +2964,44 @@ fn draw_unified_code_diff(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_split_half(
     cell: Option<&SplitCell>,
     width: usize,
     h_scroll: usize,
     is_selected: bool,
     is_queued: bool,
+    in_chunk: bool,
+    in_active_chunk: bool,
     pal: &ThemePalette,
 ) -> Vec<Span<'static>> {
+    let rail = |bg: Color| -> Span<'static> {
+        if is_selected {
+            Span::styled("▌", Style::default().fg(pal.ask_text).bg(bg))
+        } else if is_queued {
+            Span::styled("▌", Style::default().fg(pal.move_text).bg(bg))
+        } else if in_active_chunk {
+            Span::styled("▌", Style::default().fg(pal.chunk_active_rail).bg(bg))
+        } else if in_chunk {
+            Span::styled("▏", Style::default().fg(pal.chunk_rail).bg(bg))
+        } else {
+            Span::styled(" ", Style::default().bg(bg))
+        }
+    };
+
     let Some(c) = cell else {
-        return vec![Span::styled(
-            " ".repeat(width),
-            Style::default().bg(pal.empty_split),
-        )];
+        // Recessed empty alignment cell with subtle hatch so users immediately see missing lines
+        let mut pat = String::with_capacity(width);
+        for i in 0..width.saturating_sub(1) {
+            pat.push(if i % 4 == 1 { '╱' } else { ' ' });
+        }
+        return vec![
+            rail(pal.empty_split),
+            Span::styled(
+                pat,
+                Style::default().fg(pal.empty_split_fg).bg(pal.empty_split),
+            ),
+        ];
     };
 
     let base_bg = if is_selected {
@@ -2655,39 +3018,44 @@ fn render_split_half(
         }
     };
 
-    let bar = if is_selected {
-        Span::styled("▐", Style::default().fg(pal.ask_text).bg(base_bg))
-    } else if is_queued {
-        Span::styled("▐", Style::default().fg(pal.move_text).bg(base_bg))
-    } else {
-        Span::styled(" ", Style::default().bg(base_bg))
-    };
-
     let marker_fg = match c.marker.as_str() {
         "+" => pal.add_text,
         "-" => pal.del_text,
         "⇄" => pal.move_text,
-        _ => pal.dim,
+        _ => pal.line_num,
+    };
+    let num_fg = if in_chunk || c.row_bg.is_some() {
+        pal.line_num_active
+    } else {
+        pal.line_num
     };
 
     let mut spans = vec![
-        bar,
+        rail(base_bg),
         Span::styled(
             format!("{:>4} ", c.line_no),
-            Style::default().fg(pal.dim).bg(base_bg),
+            Style::default().fg(num_fg).bg(base_bg),
         ),
         Span::styled(
-            format!("{} ", c.marker),
+            c.marker.clone(),
             Style::default()
                 .fg(marker_fg)
                 .bg(base_bg)
                 .add_modifier(Modifier::BOLD),
         ),
+        Span::styled(" │ ", Style::default().fg(pal.border).bg(base_bg)),
     ];
 
-    let gutter_w = 8usize;
+    let gutter_w = 10usize;
     let code_w = width.saturating_sub(gutter_w);
-    spans.extend(style_code_segments(&c.segs, base_bg, pal, h_scroll, code_w));
+    spans.extend(style_code_segments(
+        &c.segs,
+        c.row_bg.as_deref(),
+        base_bg,
+        pal,
+        h_scroll,
+        code_w,
+    ));
     spans
 }
 
@@ -2752,28 +3120,18 @@ fn draw_split_code_diff(
         }
 
         if r.kind == "elide" {
-            let fold_id = r.fold_id.clone().unwrap_or_default();
-            let text = format!(
-                "  ⋯ {} unchanged lines (click to expand) ⋯",
-                r.count.unwrap_or(0)
-            );
-            f.render_widget(
-                Paragraph::new(Span::styled(
-                    text,
-                    Style::default().fg(pal.dim).bg(pal.fold_bg),
-                ))
-                .style(Style::default().bg(pal.fold_bg)),
+            render_elide_row(
+                f,
+                app,
+                r.fold_id.as_deref(),
+                r.count.unwrap_or(0),
                 row_rect,
             );
-            if !fold_id.is_empty() {
-                app.hitboxes.push(HitBox {
-                    rect: row_rect,
-                    action: HitAction::ExpandFold(fold_id),
-                });
-            }
             continue;
         }
 
+        let in_chunk = r.chunk_idx.is_some();
+        let in_active_chunk = r.chunk_idx == Some(app.active_chunk);
         let is_selected = app
             .selection
             .as_ref()
@@ -2789,15 +3147,26 @@ fn draw_split_code_diff(
             h_scroll,
             is_selected,
             is_queued,
+            in_chunk,
+            in_active_chunk,
             &pal,
         );
-        spans.push(Span::styled("│", Style::default().fg(pal.border).bg(pal.bg)));
+        let div_fg = if in_active_chunk {
+            pal.chunk_active_border
+        } else if in_chunk {
+            pal.chunk_border
+        } else {
+            pal.border_bright
+        };
+        spans.push(Span::styled("│", Style::default().fg(div_fg).bg(pal.bg)));
         spans.extend(render_split_half(
             r.right.as_ref(),
             right_w,
             h_scroll,
             is_selected,
             is_queued,
+            in_chunk,
+            in_active_chunk,
             &pal,
         ));
 
@@ -2912,7 +3281,7 @@ fn draw_bottom_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
             &mut x0,
             " ⏎ Send (Enter) ".to_string(),
             Style::default()
-                .fg(pal.bg)
+                .fg(Color::Rgb(12, 16, 26))
                 .bg(pal.ask_text)
                 .add_modifier(Modifier::BOLD),
             HitAction::SendAiPrompt,
@@ -2985,7 +3354,7 @@ fn draw_bottom_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
             &mut x0,
             " Commit Staged (Enter) ".to_string(),
             Style::default()
-                .fg(pal.bg)
+                .fg(Color::Rgb(12, 16, 26))
                 .bg(pal.add_text)
                 .add_modifier(Modifier::BOLD),
             HitAction::RunCommit { stage_all: false },
@@ -3021,7 +3390,10 @@ fn draw_bottom_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
             height: 1,
         };
         let msg_line = Line::from(vec![
-            Span::styled(" Commit message: ", Style::default().fg(pal.add_text).bg(pal.bg)),
+            Span::styled(
+                " Commit message: ",
+                Style::default().fg(pal.add_text).bg(pal.bg),
+            ),
             Span::styled(
                 format!("{}█", app.input_buffer),
                 Style::default().fg(pal.fg).bg(pal.bg),
@@ -3045,23 +3417,57 @@ fn draw_bottom_bar(f: &mut Frame<'_>, app: &mut AppState, area: Rect) {
         let fg = if *is_err { pal.del_text } else { pal.add_text };
         f.render_widget(
             Paragraph::new(Span::styled(
-                format!(" {msg}"),
-                Style::default().fg(fg).bg(pal.chrome),
+                format!(" ◆ {msg}"),
+                Style::default()
+                    .fg(fg)
+                    .bg(pal.chrome)
+                    .add_modifier(Modifier::BOLD),
             )),
             area,
         );
         return;
     }
 
-    let hint = format!(
-        " [{}] j/k file · J/K scroll · n/p hunk · s/u/x hunk · v review · a ask AI · c commit · Tab view · t TUI · q close",
-        pal.theme_name
-    );
-    f.render_widget(
-        Paragraph::new(Span::styled(
-            hint,
-            Style::default().fg(pal.dim).bg(pal.chrome),
-        )),
-        area,
-    );
+    let mut spans = Vec::new();
+    let mut fx = area.x;
+    let theme_pill = format!(" 🎨 {} ", pal.theme_name);
+    let tw = theme_pill.chars().count() as u16;
+    spans.push(Span::styled(
+        theme_pill,
+        Style::default()
+            .fg(pal.ask_text)
+            .bg(pal.raised)
+            .add_modifier(Modifier::BOLD),
+    ));
+    fx += tw;
+
+    for (k, desc) in [
+        (" j/k", "file "),
+        (" J/K", "scroll "),
+        (" n/p", "hunk "),
+        (" s/u/x", "stage/unstage/revert "),
+        (" v", "review "),
+        (" a", "ask AI "),
+        (" c", "commit "),
+        (" Tab", "split/unified "),
+        (" t", "TUI "),
+        (" q", "close"),
+    ] {
+        let kw = k.chars().count() as u16;
+        let dw = desc.chars().count() as u16;
+        spans.push(Span::styled(
+            k,
+            Style::default()
+                .fg(pal.fg)
+                .bg(pal.chrome)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(
+            format!(":{desc}"),
+            Style::default().fg(pal.muted).bg(pal.chrome),
+        ));
+        fx += kw + 1 + dw;
+    }
+    pad_spans_to_width(&mut spans, fx.saturating_sub(area.x), area.width, pal.chrome);
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
 }

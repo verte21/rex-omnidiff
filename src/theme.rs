@@ -41,8 +41,11 @@ pub struct ThemePalette {
     pub raised: Color,
     pub chrome: Color,
     pub border: Color,
+    pub border_bright: Color,
     pub muted: Color,
     pub dim: Color,
+    pub line_num: Color,
+    pub line_num_active: Color,
     pub accent: Color,
     pub add_text: Color,
     pub del_text: Color,
@@ -62,12 +65,17 @@ pub struct ThemePalette {
     pub row_u: Color,
     pub row_m: Color,
     pub empty_split: Color,
+    pub empty_split_fg: Color,
     pub chunk_bg: Color,
     pub chunk_active_bg: Color,
     pub chunk_border: Color,
     pub chunk_active_border: Color,
+    pub chunk_rail: Color,
+    pub chunk_active_rail: Color,
     pub chunk_range_text: Color,
     pub fold_bg: Color,
+    pub fold_fg: Color,
+    pub fold_rule: Color,
     pub staged_bg: Color,
     pub reviewed_bg: Color,
     pub selected_file_bg: Color,
@@ -141,50 +149,50 @@ impl Default for RawTheme {
 
 impl RawTheme {
     pub fn velvet_dusk() -> Self {
-        let bg = "#16161e";
-        let fg = "#c8d3f5";
+        let bg = "#141622";
+        let fg = "#eef2ff";
         Self {
             id: "velvet-dusk".to_string(),
             name: "Velvet Dusk".to_string(),
             is_dark: true,
             background: bg.to_string(),
             foreground: fg.to_string(),
-            surface: mix_hex(bg, "#ffffff", 0.04),
-            raised: mix_hex(bg, "#ffffff", 0.08),
-            border: mix_hex(bg, fg, 0.16),
-            muted: mix_hex(bg, fg, 0.62),
-            dim: mix_hex(bg, fg, 0.42),
-            accent: "#82aaff".to_string(),
-            ansi1: "#ff757f".to_string(),
-            ansi2: "#c3e88d".to_string(),
-            ansi3: "#ffc777".to_string(),
-            ansi4: "#82aaff".to_string(),
-            ansi5: "#c099ff".to_string(),
-            ansi6: "#86e1fc".to_string(),
+            surface: "#1c2030".to_string(),
+            raised: "#262b40".to_string(),
+            border: "#3b4261".to_string(),
+            muted: "#a9b1d6".to_string(),
+            dim: "#787c99".to_string(),
+            accent: "#7aa2f7".to_string(),
+            ansi1: "#f7768e".to_string(),
+            ansi2: "#4ade80".to_string(),
+            ansi3: "#e0af68".to_string(),
+            ansi4: "#7aa2f7".to_string(),
+            ansi5: "#bb9af7".to_string(),
+            ansi6: "#7dcfff".to_string(),
         }
     }
 
     pub fn merino_light() -> Self {
-        let bg = "#f7f5f0";
-        let fg = "#1f2335";
+        let bg = "#f8fafc";
+        let fg = "#0f172a";
         Self {
             id: "merino-light".to_string(),
             name: "Merino Light".to_string(),
             is_dark: false,
             background: bg.to_string(),
             foreground: fg.to_string(),
-            surface: mix_hex(bg, "#000000", 0.035),
-            raised: mix_hex(bg, "#000000", 0.07),
-            border: mix_hex(bg, fg, 0.16),
-            muted: mix_hex(bg, fg, 0.62),
-            dim: mix_hex(bg, fg, 0.44),
-            accent: "#2e7de9".to_string(),
-            ansi1: "#f52a65".to_string(),
-            ansi2: "#587539".to_string(),
-            ansi3: "#8c6c3e".to_string(),
-            ansi4: "#2e7de9".to_string(),
-            ansi5: "#9854f1".to_string(),
-            ansi6: "#007197".to_string(),
+            surface: "#f1f5f9".to_string(),
+            raised: "#e2e8f0".to_string(),
+            border: "#cbd5e1".to_string(),
+            muted: "#475569".to_string(),
+            dim: "#64748b".to_string(),
+            accent: "#2563eb".to_string(),
+            ansi1: "#e11d48".to_string(),
+            ansi2: "#16a34a".to_string(),
+            ansi3: "#d97706".to_string(),
+            ansi4: "#2563eb".to_string(),
+            ansi5: "#7c3aed".to_string(),
+            ansi6: "#0891b2".to_string(),
         }
     }
 }
@@ -240,8 +248,25 @@ pub fn load_theme_from_bundle_json(json_str: &str, target_id: &str) -> Option<Ra
         .into_iter()
         .find(|t| t.id.eq_ignore_ascii_case(target_id))?;
     let is_dark = found.appearance != "light";
-    let bg = to_hex6(&found.source.background, if is_dark { "#16161e" } else { "#f7f5f0" });
-    let fg = to_hex6(&found.source.foreground, if is_dark { "#c8d3f5" } else { "#1f2335" });
+    let raw_bg = to_hex6(
+        &found.source.background,
+        if is_dark { "#141622" } else { "#f8fafc" },
+    );
+    // Neutralize overly purple/red dark backgrounds slightly toward deep slate so green/red diffs pop
+    let bg = if is_dark {
+        mix_hex(&raw_bg, "#111622", 0.45)
+    } else {
+        raw_bg
+    };
+    let raw_fg = to_hex6(
+        &found.source.foreground,
+        if is_dark { "#eef2ff" } else { "#0f172a" },
+    );
+    let fg = if is_dark {
+        mix_hex(&raw_fg, "#f8fafc", 0.45)
+    } else {
+        mix_hex(&raw_fg, "#090d16", 0.35)
+    };
     let pole = if is_dark { "#ffffff" } else { "#000000" };
     let ansi = &found.source.ansi;
     let get_ansi = |idx: usize, fallback: &str| -> String {
@@ -249,23 +274,30 @@ pub fn load_theme_from_bundle_json(json_str: &str, target_id: &str) -> Option<Ra
             .map(|s| to_hex6(s, fallback))
             .unwrap_or_else(|| fallback.to_string())
     };
-    let ansi4 = get_ansi(4, "#82aaff");
+    // Prefer bright ANSI slots (9..14) when available so syntax and badges have crisp contrast
+    let ansi1 = get_ansi(9, &get_ansi(1, "#f7768e"));
+    let ansi2 = get_ansi(10, &get_ansi(2, "#4ade80"));
+    let ansi3 = get_ansi(11, &get_ansi(3, "#fbbf24"));
+    let ansi4 = get_ansi(12, &get_ansi(4, "#60a5fa"));
+    let ansi5 = get_ansi(13, &get_ansi(5, "#c084fc"));
+    let ansi6 = get_ansi(14, &get_ansi(6, "#38bdf8"));
+
     Some(RawTheme {
         id: found.id,
         name: found.name,
         is_dark,
-        surface: mix_hex(&bg, pole, if is_dark { 0.04 } else { 0.035 }),
-        raised: mix_hex(&bg, pole, if is_dark { 0.08 } else { 0.07 }),
-        border: mix_hex(&bg, &fg, 0.16),
-        muted: mix_hex(&bg, &fg, 0.62),
-        dim: mix_hex(&bg, &fg, 0.42),
+        surface: mix_hex(&bg, pole, if is_dark { 0.075 } else { 0.045 }),
+        raised: mix_hex(&bg, pole, if is_dark { 0.14 } else { 0.09 }),
+        border: mix_hex(&bg, &fg, if is_dark { 0.28 } else { 0.22 }),
+        muted: mix_hex(&bg, &fg, if is_dark { 0.78 } else { 0.72 }),
+        dim: mix_hex(&bg, &fg, if is_dark { 0.56 } else { 0.52 }),
         accent: ansi4.clone(),
-        ansi1: get_ansi(1, "#ff757f"),
-        ansi2: get_ansi(2, "#c3e88d"),
-        ansi3: get_ansi(3, "#ffc777"),
+        ansi1,
+        ansi2,
+        ansi3,
         ansi4,
-        ansi5: get_ansi(5, "#c099ff"),
-        ansi6: get_ansi(6, "#86e1fc"),
+        ansi5,
+        ansi6,
         background: bg,
         foreground: fg,
     })
@@ -300,51 +332,114 @@ pub fn build_palette(t: &RawTheme) -> ThemePalette {
     let surface = &t.surface;
     let accent = &t.accent;
 
-    let add_accent = mix_hex(&t.ansi2, &t.ansi6, if is_dark { 0.34 } else { 0.16 });
-    let del_accent = to_hex6(&t.ansi1, "#f7768e");
-    let move_accent = to_hex6(&t.ansi5, "#bb9af7");
-    let upd_accent = to_hex6(accent, "#7aa2f7");
-    let ask_accent = to_hex6(&t.ansi6, "#7dcfff");
+    // Vivid, unmistakable semantic diff colors
+    let add_accent = if is_dark {
+        mix_hex("#34d399", &t.ansi2, 0.35)
+    } else {
+        mix_hex("#15803d", &t.ansi2, 0.35)
+    };
+    let del_accent = if is_dark {
+        mix_hex("#fb7185", &t.ansi1, 0.35)
+    } else {
+        mix_hex("#be123c", &t.ansi1, 0.35)
+    };
+    let move_accent = if is_dark {
+        mix_hex("#c084fc", &t.ansi5, 0.35)
+    } else {
+        mix_hex("#7e22ce", &t.ansi5, 0.35)
+    };
+    let upd_accent = if is_dark {
+        mix_hex("#60a5fa", accent, 0.35)
+    } else {
+        mix_hex("#1d4ed8", accent, 0.35)
+    };
+    let ask_accent = if is_dark {
+        mix_hex("#38bdf8", &t.ansi6, 0.35)
+    } else {
+        mix_hex("#0284c7", &t.ansi6, 0.35)
+    };
 
-    let seg_i = mix_hex(bg, &add_accent, if is_dark { 0.34 } else { 0.28 });
-    let seg_d = mix_hex(bg, &del_accent, if is_dark { 0.32 } else { 0.26 });
-    let seg_u = mix_hex(bg, &upd_accent, if is_dark { 0.32 } else { 0.24 });
-    let seg_m = mix_hex(bg, &move_accent, if is_dark { 0.27 } else { 0.20 });
+    // High-contrast intra-line token highlights
+    let seg_i = if is_dark {
+        mix_hex(bg, "#10b981", 0.42)
+    } else {
+        mix_hex(bg, "#22c55e", 0.32)
+    };
+    let seg_d = if is_dark {
+        mix_hex(bg, "#f43f5e", 0.42)
+    } else {
+        mix_hex(bg, "#f43f5e", 0.30)
+    };
+    let seg_u = if is_dark {
+        mix_hex(bg, "#3b82f6", 0.42)
+    } else {
+        mix_hex(bg, "#3b82f6", 0.28)
+    };
+    let seg_m = if is_dark {
+        mix_hex(bg, "#a855f7", 0.38)
+    } else {
+        mix_hex(bg, "#a855f7", 0.25)
+    };
 
-    let row_i = mix_hex(bg, &add_accent, if is_dark { 0.14 } else { 0.12 });
-    let row_d = mix_hex(bg, &del_accent, if is_dark { 0.13 } else { 0.11 });
-    let row_u = mix_hex(bg, &upd_accent, if is_dark { 0.13 } else { 0.11 });
-    let row_m = mix_hex(bg, &move_accent, if is_dark { 0.12 } else { 0.10 });
+    // Clear, full-width row tints that never look muddy
+    let row_i = if is_dark {
+        mix_hex(bg, "#059669", 0.22)
+    } else {
+        mix_hex(bg, "#22c55e", 0.14)
+    };
+    let row_d = if is_dark {
+        mix_hex(bg, "#e11d48", 0.22)
+    } else {
+        mix_hex(bg, "#f43f5e", 0.13)
+    };
+    let row_u = if is_dark {
+        mix_hex(bg, "#2563eb", 0.20)
+    } else {
+        mix_hex(bg, "#3b82f6", 0.12)
+    };
+    let row_m = if is_dark {
+        mix_hex(bg, "#9333ea", 0.20)
+    } else {
+        mix_hex(bg, "#a855f7", 0.12)
+    };
 
-    let raised_base = mix_hex(
-        &mix_hex(bg, &t.raised, 0.50),
-        if is_dark { "#ffffff" } else { "#000000" },
-        if is_dark { 0.05 } else { 0.03 },
-    );
-    let chunk_bg = mix_hex(&raised_base, accent, if is_dark { 0.17 } else { 0.13 });
-    let chunk_active_bg = mix_hex(&raised_base, accent, if is_dark { 0.29 } else { 0.23 });
-    let chunk_border = mix_hex(&t.border, accent, if is_dark { 0.44 } else { 0.38 });
-    let chunk_active_border = mix_hex(&t.border, accent, if is_dark { 0.80 } else { 0.72 });
-    let chunk_range_text = mix_hex(&t.foreground, &ask_accent, if is_dark { 0.42 } else { 0.34 });
+    let chunk_bg = mix_hex(&t.raised, &upd_accent, if is_dark { 0.22 } else { 0.15 });
+    let chunk_active_bg = mix_hex(&t.raised, &upd_accent, if is_dark { 0.38 } else { 0.26 });
+    let chunk_border = mix_hex(&t.border, &upd_accent, if is_dark { 0.50 } else { 0.42 });
+    let chunk_active_border = mix_hex(&t.border, &ask_accent, if is_dark { 0.85 } else { 0.75 });
+    let chunk_rail = mix_hex(bg, &upd_accent, 0.60);
+    let chunk_active_rail = ask_accent.clone();
+    let chunk_range_text = mix_hex(&t.foreground, &ask_accent, if is_dark { 0.50 } else { 0.40 });
 
-    let chrome = mix_hex(bg, surface, 0.75);
-    let fold_bg = mix_hex(bg, "#000000", if is_dark { 0.24 } else { 0.045 });
-    let empty_split = mix_hex(bg, "#000000", if is_dark { 0.22 } else { 0.055 });
-    let staged_bg = mix_hex(surface, &add_accent, 0.22);
-    let reviewed_bg = mix_hex(surface, &t.ansi6, 0.22);
-    let selected_file_bg = mix_hex(surface, accent, if is_dark { 0.24 } else { 0.18 });
-    let ask_bg = mix_hex(surface, &ask_accent, if is_dark { 0.20 } else { 0.15 });
-    let ask_row_bg = mix_hex(bg, &ask_accent, if is_dark { 0.18 } else { 0.14 });
-    let queued_row_bg = mix_hex(bg, &move_accent, if is_dark { 0.14 } else { 0.10 });
+    let chrome = mix_hex(bg, surface, 0.85);
+    let border_bright = mix_hex(&t.border, &t.foreground, 0.35);
+    let line_num = mix_hex(bg, &t.foreground, if is_dark { 0.52 } else { 0.48 });
+    let line_num_active = mix_hex(bg, &t.foreground, if is_dark { 0.78 } else { 0.72 });
+
+    let fold_bg = mix_hex(bg, surface, 0.90);
+    let fold_fg = mix_hex(&t.muted, &ask_accent, 0.30);
+    let fold_rule = mix_hex(&t.border, &upd_accent, 0.25);
+
+    let empty_split = mix_hex(bg, "#000000", if is_dark { 0.35 } else { 0.06 });
+    let empty_split_fg = mix_hex(bg, &t.foreground, if is_dark { 0.16 } else { 0.15 });
+
+    let staged_bg = mix_hex(surface, &add_accent, 0.28);
+    let reviewed_bg = mix_hex(surface, &ask_accent, 0.28);
+    let selected_file_bg = mix_hex(&t.raised, &upd_accent, if is_dark { 0.36 } else { 0.24 });
+    let ask_bg = mix_hex(surface, &ask_accent, if is_dark { 0.28 } else { 0.18 });
+    let ask_row_bg = mix_hex(bg, &ask_accent, if is_dark { 0.26 } else { 0.16 });
+    let queued_row_bg = mix_hex(bg, &move_accent, if is_dark { 0.22 } else { 0.14 });
+
+    let syn_punct_hex = mix_hex(&t.foreground, &t.muted, 0.25);
 
     let tui_custom = TuiCustomPalette {
         insert_bg: seg_i.clone(),
         delete_bg: seg_d.clone(),
         move_bg: seg_m.clone(),
         update_bg: seg_u.clone(),
-        overlay_fg: to_hex6(&t.foreground, "#c0caf5"),
-        cross_highlight_bg: mix_hex(bg, accent, if is_dark { 0.38 } else { 0.30 }),
-        search_bg: mix_hex(bg, &t.ansi3, if is_dark { 0.36 } else { 0.28 }),
+        overlay_fg: to_hex6(&t.foreground, "#eef2ff"),
+        cross_highlight_bg: mix_hex(bg, &upd_accent, if is_dark { 0.42 } else { 0.30 }),
+        search_bg: mix_hex(bg, &t.ansi3, if is_dark { 0.40 } else { 0.28 }),
         before_title_fg: del_accent.clone(),
         after_title_fg: add_accent.clone(),
     };
@@ -359,9 +454,12 @@ pub fn build_palette(t: &RawTheme) -> ThemePalette {
         raised: hex_to_color(&t.raised),
         chrome: hex_to_color(&chrome),
         border: hex_to_color(&t.border),
+        border_bright: hex_to_color(&border_bright),
         muted: hex_to_color(&t.muted),
         dim: hex_to_color(&t.dim),
-        accent: hex_to_color(accent),
+        line_num: hex_to_color(&line_num),
+        line_num_active: hex_to_color(&line_num_active),
+        accent: hex_to_color(&upd_accent),
         add_text: hex_to_color(&add_accent),
         del_text: hex_to_color(&del_accent),
         move_text: hex_to_color(&move_accent),
@@ -380,12 +478,17 @@ pub fn build_palette(t: &RawTheme) -> ThemePalette {
         row_u: hex_to_color(&row_u),
         row_m: hex_to_color(&row_m),
         empty_split: hex_to_color(&empty_split),
+        empty_split_fg: hex_to_color(&empty_split_fg),
         chunk_bg: hex_to_color(&chunk_bg),
         chunk_active_bg: hex_to_color(&chunk_active_bg),
         chunk_border: hex_to_color(&chunk_border),
         chunk_active_border: hex_to_color(&chunk_active_border),
+        chunk_rail: hex_to_color(&chunk_rail),
+        chunk_active_rail: hex_to_color(&chunk_active_rail),
         chunk_range_text: hex_to_color(&chunk_range_text),
         fold_bg: hex_to_color(&fold_bg),
+        fold_fg: hex_to_color(&fold_fg),
+        fold_rule: hex_to_color(&fold_rule),
         staged_bg: hex_to_color(&staged_bg),
         reviewed_bg: hex_to_color(&reviewed_bg),
         selected_file_bg: hex_to_color(&selected_file_bg),
@@ -395,7 +498,7 @@ pub fn build_palette(t: &RawTheme) -> ThemePalette {
         syn_type: hex_to_color(&t.ansi6),
         syn_fn: hex_to_color(&t.ansi4),
         syn_comment: hex_to_color(&t.dim),
-        syn_punct: hex_to_color(&t.muted),
+        syn_punct: hex_to_color(&syn_punct_hex),
         tui_custom,
     }
 }
@@ -482,8 +585,8 @@ pub fn tokenize_syntax_segment(
             break;
         }
 
-        // String literal
-        if ch == '"' || ch == '`' {
+        // String literal (including single-quoted JS/Python strings)
+        if ch == '"' || ch == '`' || ch == '\'' {
             let quote = ch;
             let start = i;
             i += ch_len;
@@ -502,12 +605,12 @@ pub fn tokenize_syntax_segment(
         }
 
         // Identifier or keyword
-        if ch.is_ascii_alphabetic() || ch == '_' {
+        if ch.is_ascii_alphabetic() || ch == '_' || ch == '$' {
             let start = i;
             i += ch_len;
             while i < len {
                 let c = text[i..].chars().next().unwrap();
-                if c.is_ascii_alphanumeric() || c == '_' {
+                if c.is_ascii_alphanumeric() || c == '_' || c == '$' {
                     i += c.len_utf8();
                 } else {
                     break;
