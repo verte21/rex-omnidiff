@@ -945,8 +945,9 @@ fn run_event_loop(
             write!(terminal.backend_mut(), "{esc}")?;
             terminal.backend_mut().flush()?;
             app.had_kitty_last_frame = true;
-        } else if app.had_kitty_last_frame {
+        } else if app.pending_kitty_rect.is_none() && app.had_kitty_last_frame {
             clear_kitty_images(terminal.backend_mut())?;
+            app.kitty_cache.invalidate_sent();
             app.had_kitty_last_frame = false;
         }
 
@@ -959,7 +960,7 @@ fn run_event_loop(
                 Event::Key(k) => handle_key_event(app, k),
                 Event::Mouse(m) => handle_mouse_event(app, m),
                 Event::Resize(_, _) => {
-                    app.had_kitty_last_frame = true;
+                    app.kitty_cache.invalidate_sent();
                 }
                 _ => {}
             }

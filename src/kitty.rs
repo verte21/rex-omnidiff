@@ -453,16 +453,14 @@ pub fn encode_kitty_png_escape(
         .collect();
 
     let mut out = String::with_capacity(b64.len() + 256);
-    // Delete previous placement with id=KITTY_IMAGE_ID quietly (`q=2`), then move cursor to target cell
-    out.push_str(&format!(
-        "\x1b_Ga=d,d=I,i={KITTY_IMAGE_ID},q=2\x1b\\\x1b[{row_1idx};{col_1idx}H"
-    ));
+    // Position cursor at target cell and atomically replace placement p=1 of KITTY_IMAGE_ID
+    out.push_str(&format!("\x1b[{row_1idx};{col_1idx}H"));
 
     for (idx, chunk) in chunks.iter().enumerate() {
         let more = if idx + 1 < chunks.len() { 1 } else { 0 };
         if idx == 0 {
             out.push_str(&format!(
-                "\x1b_Ga=T,f=100,i={KITTY_IMAGE_ID},c={cell_cols},r={cell_rows},C=1,q=2,m={more};{chunk}\x1b\\"
+                "\x1b_Ga=T,f=100,i={KITTY_IMAGE_ID},p=1,c={cell_cols},r={cell_rows},C=1,q=2,m={more};{chunk}\x1b\\"
             ));
         } else {
             out.push_str(&format!("\x1b_Gm={more},q=2;{chunk}\x1b\\"));
@@ -481,6 +479,7 @@ pub fn clear_kitty_images<W: Write>(writer: &mut W) -> Result<()> {
 #[derive(Debug, Default)]
 pub struct KittyPreviewCache {
     last_key: String,
+    sent_key: String,
     cached_escape: String,
     cached_stats: Option<ImageDiffStats>,
     cached_sig: String,
@@ -489,6 +488,10 @@ pub struct KittyPreviewCache {
 }
 
 impl KittyPreviewCache {
+    pub fn invalidate_sent(&mut self) {
+        self.sent_key.clear();
+    }
+
     pub fn ensure_loaded(
         &mut self,
         file_sig: &str,
@@ -503,6 +506,7 @@ impl KittyPreviewCache {
             self.cached_sig = file_sig.to_string();
             self.cached_stats = Some(stats);
             self.last_key.clear();
+            self.sent_key.clear();
             self.cached_escape.clear();
         }
         self.cached_stats.as_ref().unwrap()
@@ -529,6 +533,9 @@ impl KittyPreviewCache {
         let key = format!(
             "{file_sig}:{mode:?}:{slider_pct}:{show_boxes}:{col_1idx}:{row_1idx}:{cell_cols}:{cell_rows}"
         );
+        if self.sent_key == key {
+            return None;
+        }
         if self.last_key != key || self.cached_escape.is_empty() {
             let stats = self.cached_stats.as_ref()?;
             let px_w = (cell_cols as u32) * 10;
@@ -545,8 +552,9 @@ impl KittyPreviewCache {
             );
             self.cached_escape =
                 encode_kitty_png_escape(&comp, col_1idx, row_1idx, cell_cols, cell_rows).ok()?;
-            self.last_key = key;
+            self.last_key = key.clone();
         }
+        self.sent_key = key;
         Some(&self.cached_escape)
     }
 }

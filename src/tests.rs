@@ -818,9 +818,10 @@ fn kitty_graphics_protocol_compositor_and_escape_encoding_work() {
         assert_eq!(comp.width(), 240);
         assert_eq!(comp.height(), 120);
         let esc = encode_kitty_png_escape(&comp, 5, 4, 60, 18).unwrap();
-        assert!(esc.contains(&format!("\x1b_Ga=d,d=I,i={KITTY_IMAGE_ID},q=2\x1b\\")));
         assert!(esc.contains("\x1b[4;5H"));
-        assert!(esc.contains(&format!("\x1b_Ga=T,f=100,i={KITTY_IMAGE_ID},c=60,r=18,C=1,q=2")));
+        assert!(esc.contains(&format!(
+            "\x1b_Ga=T,f=100,i={KITTY_IMAGE_ID},p=1,c=60,r=18,C=1,q=2"
+        )));
     }
 }
 
